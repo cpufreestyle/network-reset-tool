@@ -1,5 +1,30 @@
-﻿build/
+# Build
+build/
 dist/
+dist_new/
 *.spec
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.class
+*.so
+*.egg-info/
+*.egg
+.eggs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp
+*.tmp
+*.bak
+*.log
