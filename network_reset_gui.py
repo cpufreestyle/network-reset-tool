@@ -916,6 +916,10 @@ class DiagnosticPanel(tk.Frame):
                                           COLORS["purple"], font_size=11)
         self.btn_traceroute.pack(side="left", padx=4)
 
+        self.btn_health = styled_btn(ctrl, "📊 健康报告", self._do_health_report,
+                                      COLORS["teal"], font_size=11)
+        self.btn_health.pack(side="left", padx=4)
+
         # 自定义 Ping 输入
         self.custom_target = tk.StringVar(value="www.baidu.com")
         tk.Entry(ctrl, textvariable=self.custom_target, font=("Consolas", 10),
@@ -980,7 +984,7 @@ class DiagnosticPanel(tk.Frame):
         self._running = running
         state = "disabled" if running else "normal"
         for btn in [self.btn_all_diag, self.btn_quick, self.btn_overview,
-                    self.btn_traceroute]:
+                    self.btn_traceroute, self.btn_health]:
             btn.config(state=state)
         if running:
             self.diag_progress.start(8)
@@ -1260,6 +1264,134 @@ class DiagnosticPanel(tk.Frame):
         self.after(0, lambda: self._set_running(False))
         self.after(0, lambda: self.diag_progress.configure(value=100))
         self.after(0, lambda: self._set_diag_status("✅ 完整诊断完成", COLORS["green"]))
+
+    # ---- 健康报告 ----
+    def _do_health_report(self):
+        if self._running:
+            return
+        self._set_running(True, "生成健康报告")
+        self.after(0, lambda: self._clear_results())
+        self._set_diag_status("⏳ 生成健康报告...", COLORS["teal"])
+        threading.Thread(target=self._thread_health_report, daemon=True).start()
+
+    def _thread_health_report(self):
+        diag = NetworkDiagnostic()
+        results = diag.run_full_diagnostic()
+        self._latest_results = results
+
+        ping_results = results.get('ping', [])
+        dns_results = results.get('dns', [])
+        overview = results.get('overview', [])
+
+        # 计算评分
+        # 连通性 (40分): 5个目标，每个8分
+        ping_ok = sum(1 for p in ping_results if p['ok'])
+        conn_score = ping_ok * 8
+
+        # DNS可用性 (30分): 3个DNS，每个10分
+        dns_ok = sum(1 for d in dns_results if d['ok'])
+        dns_score = dns_ok * 10
+
+        # 网络配置完整性 (30分)
+        cfg_score = 0
+        has_ip = has_gw = has_dns = False
+        for k, v in overview:
+            if 'IP' in k: has_ip = True
+            if '网关' in k: has_gw = True
+            if 'DNS' in k: has_dns = True
+        if has_ip: cfg_score += 10
+        if has_gw: cfg_score += 10
+        if has_dns: cfg_score += 10
+
+        total = conn_score + dns_score + cfg_score
+
+        # 等级
+        if total >= 90:
+            grade, grade_color = "优秀", COLORS["green"]
+        elif total >= 70:
+            grade, grade_color = "良好", COLORS["blue"]
+        elif total >= 50:
+            grade, grade_color = "一般", COLORS["yellow"]
+        else:
+            grade, grade_color = "较差", COLORS["red"]
+
+        # 平均延迟
+        ok_pings = [p for p in ping_results if p['ok']]
+        avg_latency = round(sum(p['avg_ms'] for p in ok_pings) / len(ok_pings), 1) if ok_pings else 0
+
+        # 丢包率
+        avg_loss = round(sum(p['loss'] for p in ping_results) / len(ping_results), 1) if ping_results else 100
+
+        # 渲染卡片
+        def rc(parent, icon, title, value, sub=None, color=None):
+            card = self._card(parent, icon + " " + title, bg="#2a2a3e")
+            vc = color or (COLORS["green"] if float(value.rstrip('%')) >= 80
+                           else COLORS["yellow"] if float(value.rstrip('%')) >= 50
+                           else COLORS["red"])
+            lbl = tk.Label(card, text=value, font=("微软雅黑", 16, "bold"),
+                           fg=vc, bg="#2a2a3e")
+            lbl.pack(pady=(4, 0))
+            if sub:
+                tk.Label(card, text=sub, font=("微软雅黑", 8),
+                         fg=COLORS["muted"], bg="#2a2a3e").pack()
+
+        # 顶部：总分 + 等级
+        top = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        top.pack(fill="x", pady=4, padx=4)
+        score_card = tk.Frame(top, bg="#2a2a3e")
+        score_card.pack(side="left", fill="both", expand=True, padx=(0, 4))
+        tk.Label(score_card, text="网络健康评分", font=("微软雅黑", 10),
+                 fg=COLORS["text"], bg="#2a2a3e").pack(pady=(8, 0))
+        score_num = tk.Label(score_card, text=f"{total}",
+                             font=("微软雅黑", 36, "bold"),
+                             fg=grade_color, bg="#2a2a3e")
+        score_num.pack()
+        tk.Label(score_card, text=f"{grade}", font=("微软雅黑", 11, "bold"),
+                 fg=grade_color, bg="#2a2a3e").pack(pady=(0, 8))
+
+        # 等级说明
+        advice_card = tk.Frame(top, bg="#2a2a3e")
+        advice_card.pack(side="right", fill="both", expand=True, padx=(4, 0))
+        tk.Label(advice_card, text="💡 健康建议", font=("微软雅黑", 10, "bold"),
+                 fg=COLORS["text"], bg="#2a2a3e").pack(anchor="w", padx=10, pady=(8, 2))
+        if total >= 90:
+            advice_text = "网络状态优秀，所有检测通过，继续保持。"
+        elif total >= 70:
+            advice_text = "网络状态良好，个别指标待优化，可尝试 DNS 一键切换。"
+        elif total >= 50:
+            advice_text = "网络状态一般，建议执行「网络重置」修复潜在问题。"
+        else:
+            advice_text = "网络状态较差，建议立即执行「一键重置全部」修复网络。"
+        tk.Label(advice_card, text=advice_text, font=("微软雅黑", 9),
+                 fg=COLORS["subtext"], bg="#2a2a3e", wraplength=200,
+                 justify="left", anchor="w").pack(anchor="w", padx=10, pady=(0, 8))
+
+        # 维度卡片行
+        row1 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row1.pack(fill="x", pady=4, padx=4)
+        conn_pct = f"{round(ping_ok / max(len(ping_results), 1) * 100)}%"
+        dns_pct = f"{round(dns_ok / max(len(dns_results), 1) * 100)}%"
+        cfg_pct = f"{round(cfg_score / 30 * 100)}%"
+        rc(row1, "📡", "连通性", conn_pct, f"{ping_ok}/{len(ping_results)} 目标可达")
+        rc(row1, "🔍", "DNS可用", dns_pct, f"{dns_ok}/{len(dns_results)} DNS正常")
+        rc(row1, "🔧", "配置完整", cfg_pct, "IP/网关/DNS状态")
+
+        # 性能行
+        row2 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row2.pack(fill="x", pady=4, padx=4)
+        rc(row2, "⚡", "平均延迟", f"{avg_latency}ms", "5个目标平均",
+           COLORS["green"] if avg_latency < 100 else COLORS["yellow"] if avg_latency < 300 else COLORS["red"])
+        rc(row2, "📉", "平均丢包", f"{avg_loss}%", "5个目标平均",
+           COLORS["green"] if avg_loss == 0 else COLORS["yellow"] if avg_loss < 20 else COLORS["red"])
+        # DNS服务器
+        dns_svr = next((v for k, v in overview if 'DNS' in k), "—")
+        rc(row2, "🌐", "当前DNS", dns_svr[:20] if len(dns_svr) > 20 else dns_svr, "当前使用")
+
+        self.after(0, lambda: self._set_running(False))
+        self.after(0, lambda: self.diag_progress.configure(value=100))
+        self.after(0, lambda: self._set_diag_status(
+            f"📊 健康报告: {total}分 {grade} | {advice_text[:20]}...",
+            grade_color))
 
 
 # ============================================================
