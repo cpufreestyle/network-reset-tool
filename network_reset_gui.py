@@ -64,6 +64,16 @@ COLORS = {
 #  网络重置核心类
 # ============================================================
 
+# ===== DNS 预设配置 =====
+DNS_PRESETS = {
+    "自动获取(DHCP)": {"mode": "dhcp", "primary": "", "secondary": "", "color": COLORS["muted"]},
+    "阿里 DNS":    {"mode": "static", "primary": "223.5.5.5",  "secondary": "223.6.6.6",  "color": COLORS["orange"]},
+    "Google DNS": {"mode": "static", "primary": "8.8.8.8",    "secondary": "8.8.4.4",    "color": COLORS["blue"]},
+    "Cloudflare": {"mode": "static", "primary": "1.1.1.1",    "secondary": "1.0.0.1",    "color": COLORS["sky"]},
+    "114 DNS":    {"mode": "static", "primary": "114.114.114.114", "secondary": "114.114.115.115", "color": COLORS["pink"]},
+}
+
+
 class NetworkResetTool:
     def __init__(self, log_callback=None):
         self.log_callback = log_callback
@@ -184,6 +194,76 @@ if ($adapters) {
                 if dns:
                     cmd = f'netsh interface ip set dns "{name}" static {dns} primary'
                     self.run_cmd(cmd)
+
+    def get_current_dns(self, adapter_name=None):
+        """获取当前 DNS 服务器地址"""
+        ps_script = '''
+$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -eq $true }
+if ($adapters) {
+    foreach ($a in $adapters) {
+        $name = (Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.GUID -eq $a.SettingID }).NetConnectionID
+        $dhcp = $a.DHCPEnabled
+        $dns = $a.DNSServerSearchOrder -join ','
+        if ($name -and $dns) { Write-Output "$name|$dhcp|$dns" }
+    }
+}
+'''
+        try:
+            result = subprocess.run(['powershell', '-NoProfile', '-Command', ps_script],
+                                   capture_output=True, text=True, encoding='utf-8')
+            lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip() and '|' in l]
+            if not lines:
+                return [], 'unknown'
+            # 取第一个有 DNS 的适配器
+            parts = lines[0].split('|')
+            if len(parts) >= 3:
+                is_dhcp = parts[1].strip().lower() == 'true'
+                dns_list = [d.strip() for d in parts[2].split(',') if d.strip()]
+                return dns_list, ('dhcp' if is_dhcp else 'static')
+        except Exception:
+            pass
+        return [], 'unknown'
+
+    def set_dns(self, adapter_name, primary, secondary=None):
+        """设置 DNS 服务器"""
+        # 先设主 DNS
+        cmd_set_primary = f'netsh interface ip set dns "{adapter_name}" static {primary} primary'
+        ok1 = self.run_cmd(cmd_set_primary)
+        if not ok1:
+            self.log(f"  ✗ 主 DNS {primary} 设置失败")
+        else:
+            self.log(f"  ✓ 主 DNS: {primary}")
+        # 再设备用 DNS
+        if secondary:
+            cmd_set_secondary = f'netsh interface ip add dns "{adapter_name}" {secondary} index=2'
+            ok2 = self.run_cmd(cmd_set_secondary)
+            if not ok2:
+                self.log(f"  ✗ 备用 DNS {secondary} 设置失败")
+            else:
+                self.log(f"  ✓ 备用 DNS: {secondary}")
+        return ok1
+
+    def set_dhcp_dns(self, adapter_name):
+        """切换为 DHCP 自动获取 DNS"""
+        cmd = f'netsh interface ip set dns "{adapter_name}" dhcp'
+        if self.run_cmd(cmd):
+            self.log(f"  ✓ DNS 已切换为自动获取 (DHCP)")
+            return True
+        else:
+            self.log(f"  ✗ DNS 切换失败")
+            return False
+
+    def switch_dns(self, preset_name, adapter_name=None):
+        """切换 DNS 到预设值"""
+        preset = DNS_PRESETS.get(preset_name)
+        if not preset:
+            return
+        self.log(f"[DNS] 切换到: {preset_name}")
+        if preset['mode'] == 'dhcp':
+            self.set_dhcp_dns(adapter_name)
+        else:
+            self.set_dns(adapter_name, preset['primary'], preset.get('secondary'))
+        self.flush_dns()
 
     def run_full_reset(self):
         self.log("=" * 50)
@@ -449,6 +529,47 @@ class ResetPanel(tk.Frame):
 
         self._make_btn(row3, "📥 还原IP",      self._do_restore, COLORS["sky"]).pack(side="left", expand=True, fill="x", padx=3)
 
+        # ===== DNS 一键切换 =====
+        tk.Frame(btn_area, bg=COLORS["surface2"], height=1).pack(fill="x", pady=(8, 3))
+        dns_header = tk.Frame(btn_area, bg=self["bg"])
+        dns_header.pack(fill="x", pady=(0, 4))
+        tk.Label(dns_header, text="— DNS 一键切换 —", font=("微软雅黑", 9),
+                 fg=COLORS["muted"], bg=self["bg"]).pack(side="left")
+        self.dns_current_label = tk.Label(dns_header, text="", font=("微软雅黑", 9),
+                                          fg=COLORS["yellow"], bg=self["bg"])
+        self.dns_current_label.pack(side="right")
+
+        # DNS 预设按钮行
+        dns_row1 = tk.Frame(btn_area, bg=self["bg"])
+        dns_row1.pack(fill="x", pady=2)
+        dns_row2 = tk.Frame(btn_area, bg=self["bg"])
+        dns_row2.pack(fill="x", pady=2)
+
+        for i, (name, cfg) in enumerate(DNS_PRESETS.items()):
+            row = dns_row1 if i < 3 else dns_row2
+            self._make_dns_btn(row, name, cfg).pack(side="left", expand=True, fill="x", padx=3)
+
+        # 自定义 DNS 输入行
+        dns_custom_row = tk.Frame(btn_area, bg=self["bg"])
+        dns_custom_row.pack(fill="x", pady=(2, 0))
+        tk.Label(dns_custom_row, text="自定义:", font=("微软雅黑", 9),
+                 fg=COLORS["subtext"], bg=self["bg"]).pack(side="left", padx=(3, 4))
+        self.dns_primary_entry = tk.Entry(dns_custom_row, font=("Consolas", 9),
+                                           bg=COLORS["surface"], fg=COLORS["text"],
+                                           insertbackground=COLORS["text"],
+                                           relief="flat", bd=0, width=14)
+        self.dns_primary_entry.pack(side="left", padx=2)
+        self.dns_primary_entry.insert(0, "")
+        tk.Label(dns_custom_row, text="备用:", font=("微软雅黑", 9),
+                 fg=COLORS["subtext"], bg=self["bg"]).pack(side="left", padx=(6, 4))
+        self.dns_secondary_entry = tk.Entry(dns_custom_row, font=("Consolas", 9),
+                                            bg=COLORS["surface"], fg=COLORS["text"],
+                                            insertbackground=COLORS["text"],
+                                            relief="flat", bd=0, width=14)
+        self.dns_secondary_entry.pack(side="left", padx=2)
+        styled_btn(dns_custom_row, "应用", self._do_custom_dns,
+                   COLORS["green"], font_size=9).pack(side="left", padx=6)
+
         # 状态 + 进度
         self.status_label = tk.Label(self, text="就绪", font=("微软雅黑", 10),
                                       fg=COLORS["green"], bg=self["bg"], anchor="w")
@@ -510,8 +631,94 @@ class ResetPanel(tk.Frame):
 
         self._log("✅ 程序已就绪，请选择操作...")
 
+        # 刷新当前 DNS 状态
+        self.after(500, self._refresh_dns_status)
+
     def _make_btn(self, parent, text, cmd, color):
         return styled_btn(parent, text, cmd, color, font_size=10, bold=True)
+
+    def _get_active_adapter(self):
+        """获取活动网卡名称"""
+        try:
+            ps = '''
+$adapter = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
+if ($adapter) { Write-Output $adapter.NetConnectionID }
+'''
+            result = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
+                                   capture_output=True, text=True, encoding='utf-8')
+            name = result.stdout.strip()
+            return name if name else None
+        except Exception:
+            return None
+
+    def _make_dns_btn(self, parent, name, cfg):
+        btn = tk.Button(parent, text=name, font=("微软雅黑", 9, "bold"),
+                        bg=cfg['color'], fg=COLORS["bg"],
+                        activebackground=cfg['color'], activeforeground=COLORS["bg"],
+                        relief="flat", cursor="hand2", padx=5, pady=4,
+                        command=lambda n=name: self._do_dns_switch(n))
+        return btn
+
+    def _do_dns_switch(self, preset_name):
+        if self._running:
+            return
+        self._set_running(True, f"切换 DNS 到 {preset_name}")
+        threading.Thread(target=self._thread_dns_switch,
+                        args=(preset_name,), daemon=True).start()
+
+    def _thread_dns_switch(self, preset_name):
+        adapter = self._get_active_adapter()
+        if not adapter:
+            self.after(0, lambda: self._log("⚠ 未找到活动网卡，请检查网络连接"))
+            self.after(0, lambda: self._set_running(False, ""))
+            self.after(0, lambda: self._set_status("⚠ 未找到活动网卡", COLORS["orange"]))
+            return
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
+        tool.switch_dns(preset_name, adapter)
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status(f"✅ DNS 已切换到 {preset_name}", COLORS["green"]))
+        self.after(0, lambda: self._refresh_dns_status())
+
+    def _do_custom_dns(self):
+        if self._running:
+            return
+        primary = self.dns_primary_entry.get().strip()
+        if not primary:
+            self._set_status("⚠ 请输入主 DNS 地址", COLORS["orange"])
+            return
+        if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', primary):
+            self._set_status("⚠ DNS 地址格式不正确", COLORS["red"])
+            return
+        secondary = self.dns_secondary_entry.get().strip()
+        self._set_running(True, f"设置自定义 DNS: {primary}")
+        threading.Thread(target=self._thread_custom_dns,
+                        args=(primary, secondary), daemon=True).start()
+
+    def _thread_custom_dns(self, primary, secondary):
+        adapter = self._get_active_adapter()
+        if not adapter:
+            self.after(0, lambda: self._log("⚠ 未找到活动网卡"))
+            self.after(0, lambda: self._set_running(False, ""))
+            return
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
+        tool.log(f"[DNS] 自定义 DNS: {primary}")
+        ok = tool.set_dns(adapter, primary, secondary if secondary else None)
+        tool.flush_dns()
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status(
+            f"✅ 自定义 DNS 设置成功" if ok else "❌ DNS 设置失败",
+            COLORS["green"] if ok else COLORS["red"]))
+        self.after(0, lambda: self._refresh_dns_status())
+
+    def _refresh_dns_status(self):
+        """刷新当前 DNS 显示"""
+        tool = NetworkResetTool()
+        dns_list, mode = tool.get_current_dns()
+        if dns_list:
+            mode_text = "自动" if mode == "dhcp" else "手动"
+            self.dns_current_label.config(text=f"当前: {', '.join(dns_list)} [{mode_text}]")
+        else:
+            self.dns_current_label.config(text="当前: 获取中...")
 
     def _log(self, msg):
         self.log_box.configure(state="normal")
