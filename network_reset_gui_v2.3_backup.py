@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Windows 网络重置工具 - GUI 版本 v2.4
-修复：
-  1. DNS切换"未找到活动网卡"问题 - 改进适配器检测逻辑
-  2. 日志界面闪退 - 修复线程安全问题
-  3. Lambda捕获bug - 使用functools.partial或默认参数
-  4. 网络诊断卡死 - 增加超时和异常处理
+Windows 网络重置工具 - GUI 版本 v2.2
+重置网络配置 + 网络诊断
 """
 
 import os
@@ -18,36 +14,22 @@ import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 import ctypes
-import functools
 
 
-# ===== 单例检测（socket方式） =====
-import socket
-
-_SINGLETON_PORT = 45678  # 固定端口
-_SINGLETON_SOCKET = None
+# ===== 单例检测 =====
+_SINGLETON_MUTEX = None
 
 def _acquire_singleton():
-    """使用socket端口绑定实现单例检测（Windows友好）"""
-    global _SINGLETON_SOCKET
+    global _SINGLETON_MUTEX
     try:
-        _SINGLETON_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        _SINGLETON_SOCKET.bind(('127.0.0.1', _SINGLETON_PORT))
-        _SINGLETON_SOCKET.listen(1)
-        return True  # 成功绑定 = 第一个实例
-    except socket.error:
-        return False  # 端口已被占用 = 已有实例运行
+        _SINGLETON_MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, "NetworkResetTool_v22")
+        if _SINGLETON_MUTEX == 0 or _SINGLETON_MUTEX is None:
+            return True
+        return (ctypes.windll.kernel32.GetLastError() != 183)
+    except Exception:
+        return True
 
 _am_first = _acquire_singleton()
-
-def _release_singleton():
-    """释放socket（程序退出时调用）"""
-    global _SINGLETON_SOCKET
-    if _SINGLETON_SOCKET:
-        try:
-            _SINGLETON_SOCKET.close()
-        except Exception:
-            pass
 
 
 def is_admin():
@@ -350,7 +332,7 @@ class NetworkDiagnostic:
                 capture_output=True, text=True, encoding=enc, timeout=timeout
             )
             return result.stdout.strip()
-        except Exception as e:
+        except Exception:
             return ""
 
     def get_overview(self):
@@ -375,7 +357,7 @@ if ($active) {
 }
 Write-Output ($out -join "`n")
 '''
-        output = self._run_ps(ps, timeout=10)
+        output = self._run_ps(ps, timeout=15)
         lines = [l for l in output.split('\n') if l.strip() and '|' in l]
         for line in lines:
             parts = line.split('|', 1)
@@ -389,17 +371,17 @@ Write-Output ($out -join "`n")
         try:
             result = subprocess.run(
                 ['ping', '-n', str(count), target],
-                capture_output=True, text=True, encoding='gbk', timeout=10
+                capture_output=True, text=True, encoding='gbk', timeout=count * 5 + 5
             )
             output = result.stdout
             # 解析平均延迟
             avg_ms = None
-            match = re.search(r'(?:平均|Average)\s*=\s*(\d+)', output)
+            match = re.search(r'平均\s*=\s*(\d+)', output)
             if match:
                 avg_ms = int(match.group(1))
-            # 解析丢包率 - 找 "XXX% loss" 格式（统计行）
+            # 解析丢包率
             loss = 100
-            match = re.search(r'(\d+)%\s+loss', output, re.IGNORECASE)
+            match = re.search(r'(\d+)%', output)
             if match:
                 loss = int(match.group(1))
             ok = loss < 100 and avg_ms is not None
@@ -408,26 +390,19 @@ Write-Output ($out -join "`n")
             return False, None, 100, ""
 
     def dns_lookup(self, target, dns_server=None):
-        """DNS 解析测试 - 使用 nslookup 获取 IP 地址"""
-        try:
-            if dns_server:
-                cmd = ['nslookup', target, dns_server]
-            else:
-                cmd = ['nslookup', target]
-            result = subprocess.run(cmd, capture_output=True, text=True,
-                                   encoding='gbk', timeout=5)
-            output = result.stdout
-            # 提取所有 IPv4 地址
-            ipv4_addrs = re.findall(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', output)
-            # nslookup 输出中，第一个 IPv4 是 DNS 服务器自身，后续才是解析结果
-            ip = ipv4_addrs[1] if len(ipv4_addrs) > 1 else None
-            # 检查是否解析成功
-            name_resolved = ("can't find" not in output.lower()
-                             and '找不到' not in output
-                             and ip is not None)
-            return name_resolved, ip, output
-        except Exception as e:
-            return False, None, str(e)
+        """DNS 解析测试"""
+        if dns_server:
+            script = f"Resolve-DnsName -Name {target} -Server {dns_server} -Type A -ErrorAction SilentlyContinue | Select-Object -First 1 | Format-List Name,IPAddress | Out-String"
+        else:
+            script = f"Resolve-DnsName -Name {target} -Type A -ErrorAction SilentlyContinue | Select-Object -First 1 | Format-List Name,IPAddress | Out-String"
+        output = self._run_ps(script, timeout=8)
+        lines = [l.strip() for l in output.split('\n') if l.strip()]
+        ip = None
+        for line in lines:
+            if 'IPAddress' in line:
+                ip = line.split(':', 1)[1].strip()
+        name_resolved = 'Name' in output
+        return name_resolved, ip, output
 
     def traceroute(self, target):
         """Tracert 路由追踪"""
@@ -447,67 +422,36 @@ Write-Output ($out -join "`n")
         # 1. 网络状态总览
         if progress_callback:
             progress_callback(0, "获取网络状态...")
-        try:
-            results['overview'] = self.get_overview()
-        except Exception as e:
-            results['overview'] = []
-            if self.log_callback:
-                self.log_callback(f"获取网络状态失败: {e}")
+        results['overview'] = self.get_overview()
 
         # 2. Ping 测试
         results['ping'] = []
-        total_ping = len(self.PING_TARGETS)
         for i, (target, label, color) in enumerate(self.PING_TARGETS):
             if progress_callback:
-                pct = int((i / total_ping) * 40) + 10
-                progress_callback(pct, f"Ping {label}...")
-            try:
-                ok, avg_ms, loss, _ = self.ping(target)
-                results['ping'].append({
-                    'target': target,
-                    'label': label,
-                    'color': color,
-                    'ok': ok,
-                    'avg_ms': avg_ms,
-                    'loss': loss,
-                })
-            except Exception as e:
-                results['ping'].append({
-                    'target': target,
-                    'label': label,
-                    'color': color,
-                    'ok': False,
-                    'avg_ms': None,
-                    'loss': 100,
-                })
-                if self.log_callback:
-                    self.log_callback(f"Ping {label} 失败: {e}")
+                progress_callback(int((i / len(self.PING_TARGETS)) * 40) + 10, f"Ping {label}...")
+            ok, avg_ms, loss, _ = self.ping(target)
+            results['ping'].append({
+                'target': target,
+                'label': label,
+                'color': color,
+                'ok': ok,
+                'avg_ms': avg_ms,
+                'loss': loss,
+            })
 
         # 3. DNS 解析
         results['dns'] = []
         test_host = "www.baidu.com"
-        total_dns = len(self.DNS_TARGETS)
         for i, (dns, label) in enumerate(self.DNS_TARGETS):
             if progress_callback:
-                pct = 55 + int((i / total_dns) * 40)
-                progress_callback(pct, f"DNS {label}...")
-            try:
-                ok, ip, _ = self.dns_lookup(test_host, dns)
-                results['dns'].append({
-                    'dns': dns,
-                    'label': label,
-                    'ok': ok,
-                    'ip': ip,
-                })
-            except Exception as e:
-                results['dns'].append({
-                    'dns': dns,
-                    'label': label,
-                    'ok': False,
-                    'ip': None,
-                })
-                if self.log_callback:
-                    self.log_callback(f"DNS {label} 解析失败: {e}")
+                progress_callback(55, f"DNS {label}...")
+            ok, ip, _ = self.dns_lookup(test_host, dns)
+            results['dns'].append({
+                'dns': dns,
+                'label': label,
+                'ok': ok,
+                'ip': ip,
+            })
 
         if progress_callback:
             progress_callback(100, "诊断完成")
@@ -694,48 +638,18 @@ class ResetPanel(tk.Frame):
         return styled_btn(parent, text, cmd, color, font_size=10, bold=True)
 
     def _get_active_adapter(self):
-        """获取活动网卡名称 - 修复v2.3的bug"""
+        """获取活动网卡名称"""
         try:
-            # 方法1: 使用 Get-NetAdapter (Windows 8/Server 2012+)
-            ps1 = '''
+            ps = '''
 $adapter = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
 if ($adapter) { Write-Output $adapter.NetConnectionID }
 '''
-            result = subprocess.run(['powershell', '-NoProfile', '-Command', ps1],
-                                   capture_output=True, text=True, encoding='utf-8', timeout=5)
+            result = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
+                                   capture_output=True, text=True, encoding='utf-8')
             name = result.stdout.strip()
-            if name:
-                return name
-        except Exception as e:
-            self._log(f"Get-NetAdapter 失败: {e}")
-
-        try:
-            # 方法2: 使用 WMI (兼容性更好)
-            ps2 = '''
-$adapter = Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.NetConnectionStatus -eq 2 } | Select-Object -First 1
-if ($adapter) { Write-Output $adapter.NetConnectionID }
-'''
-            result = subprocess.run(['powershell', '-NoProfile', '-Command', ps2],
-                                   capture_output=True, text=True, encoding='utf-8', timeout=5)
-            name = result.stdout.strip()
-            if name:
-                return name
-        except Exception as e:
-            self._log(f"WMI 查询失败: {e}")
-
-        # 方法3: 使用 ipconfig 解析
-        try:
-            result = subprocess.run(['ipconfig'], capture_output=True, text=True, encoding='gbk', timeout=5)
-            output = result.stdout
-            # 查找有 IPv4 地址的适配器
-            for line in output.split('\n'):
-                if 'IPv4' in line or '适配器' in line:
-                    # 提取适配器名称
-                    pass
+            return name if name else None
         except Exception:
-            pass
-
-        return None
+            return None
 
     def _make_dns_btn(self, parent, name, cfg):
         btn = tk.Button(parent, text=name, font=("微软雅黑", 9, "bold"),
@@ -753,24 +667,17 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
                         args=(preset_name,), daemon=True).start()
 
     def _thread_dns_switch(self, preset_name):
-        """修复: 使用默认参数避免lambda捕获bug"""
         adapter = self._get_active_adapter()
         if not adapter:
-            # 修复: 使用after和默认参数
-            self.after(0, functools.partial(self._log, "⚠ 未找到活动网卡，请检查网络连接"))
-            self.after(0, functools.partial(self._set_running, False, ""))
-            self.after(0, functools.partial(self._set_status, "⚠ 未找到活动网卡", COLORS["orange"]))
+            self.after(0, lambda: self._log("⚠ 未找到活动网卡，请检查网络连接"))
+            self.after(0, lambda: self._set_running(False, ""))
+            self.after(0, lambda: self._set_status("⚠ 未找到活动网卡", COLORS["orange"]))
             return
-        # 修复: 使用functools.partial避免lambda捕获问题
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         tool.switch_dns(preset_name, adapter)
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status, f"✅ DNS 已切换到 {preset_name}", COLORS["green"]))
-        self.after(0, self._refresh_dns_status)
-
-    def _safe_log(self, msg):
-        """线程安全的日志输出"""
-        self.after(0, functools.partial(self._log, msg))
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status(f"✅ DNS 已切换到 {preset_name}", COLORS["green"]))
+        self.after(0, lambda: self._refresh_dns_status())
 
     def _do_custom_dns(self):
         if self._running:
@@ -790,18 +697,18 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
     def _thread_custom_dns(self, primary, secondary):
         adapter = self._get_active_adapter()
         if not adapter:
-            self.after(0, functools.partial(self._log, "⚠ 未找到活动网卡"))
-            self.after(0, functools.partial(self._set_running, False, ""))
+            self.after(0, lambda: self._log("⚠ 未找到活动网卡"))
+            self.after(0, lambda: self._set_running(False, ""))
             return
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         tool.log(f"[DNS] 自定义 DNS: {primary}")
         ok = tool.set_dns(adapter, primary, secondary if secondary else None)
         tool.flush_dns()
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status,
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status(
             f"✅ 自定义 DNS 设置成功" if ok else "❌ DNS 设置失败",
             COLORS["green"] if ok else COLORS["red"]))
-        self.after(0, self._refresh_dns_status)
+        self.after(0, lambda: self._refresh_dns_status())
 
     def _refresh_dns_status(self):
         """刷新当前 DNS 显示"""
@@ -814,7 +721,6 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
             self.dns_current_label.config(text="当前: 获取中...")
 
     def _log(self, msg):
-        """修复: 确保线程安全"""
         self.log_box.configure(state="normal")
         self.log_box.insert("end", msg + "\n")
         self.log_box.see("end")
@@ -852,13 +758,12 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         threading.Thread(target=self._thread_winsock, daemon=True).start()
 
     def _thread_winsock(self):
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         ok = tool.reset_winsock()
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status,
-            "✅ Winsock 重置完成" if ok else "❌ 操作失败",
-            COLORS["green"] if ok else COLORS["red"]))
-        self.after(0, functools.partial(self._log, "\n⚠ 可能需要重启电脑使设置生效"))
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status("✅ Winsock 重置完成" if ok else "❌ 操作失败",
+                         COLORS["green"] if ok else COLORS["red"]))
+        self.after(0, lambda: self._log("\n⚠ 可能需要重启电脑使设置生效"))
 
     def _do_tcpip(self):
         if self._running: return
@@ -866,11 +771,11 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         threading.Thread(target=self._thread_tcpip, daemon=True).start()
 
     def _thread_tcpip(self):
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         tool.reset_tcpip()
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status, "✅ TCP/IP 重置完成", COLORS["green"]))
-        self.after(0, functools.partial(self._log, "\n⚠ 必须重启电脑使设置生效"))
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status("✅ TCP/IP 重置完成", COLORS["green"]))
+        self.after(0, lambda: self._log("\n⚠ 必须重启电脑使设置生效"))
 
     def _do_dns(self):
         if self._running: return
@@ -878,12 +783,11 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         threading.Thread(target=self._thread_dns, daemon=True).start()
 
     def _thread_dns(self):
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         ok = tool.flush_dns()
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status,
-            "✅ DNS 缓存已清除" if ok else "❌ 操作失败",
-            COLORS["green"] if ok else COLORS["red"]))
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status("✅ DNS 缓存已清除" if ok else "❌ 操作失败",
+                         COLORS["green"] if ok else COLORS["red"]))
 
     def _do_arp(self):
         if self._running: return
@@ -891,12 +795,11 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         threading.Thread(target=self._thread_arp, daemon=True).start()
 
     def _thread_arp(self):
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         ok = tool.flush_arp()
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status,
-            "✅ ARP 缓存已清除" if ok else "❌ 操作失败",
-            COLORS["green"] if ok else COLORS["red"]))
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status("✅ ARP 缓存已清除" if ok else "❌ 操作失败",
+                         COLORS["green"] if ok else COLORS["red"]))
 
     def _do_dhcp(self):
         if self._running: return
@@ -904,10 +807,10 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         threading.Thread(target=self._thread_dhcp, daemon=True).start()
 
     def _thread_dhcp(self):
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         tool.renew_dhcp()
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status, "✅ DHCP 已刷新", COLORS["green"]))
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status("✅ DHCP 已刷新", COLORS["green"]))
 
     def _do_backup(self):
         if self._running: return
@@ -915,11 +818,11 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         threading.Thread(target=self._thread_backup, daemon=True).start()
 
     def _thread_backup(self):
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         tool.backup_static_ip()
         self._static_configs = tool.static_configs
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status, "✅ IP 配置备份完成", COLORS["green"]))
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status("✅ IP 配置备份完成", COLORS["green"]))
 
     def _do_restore(self):
         if self._running: return
@@ -931,11 +834,11 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         threading.Thread(target=self._thread_restore, daemon=True).start()
 
     def _thread_restore(self):
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         tool.static_configs = self._static_configs
         tool.restore_static_ip()
-        self.after(0, functools.partial(self._set_running, False, ""))
-        self.after(0, functools.partial(self._set_status, "✅ IP 配置已还原", COLORS["green"]))
+        self.after(0, lambda: self._set_running(False, ""))
+        self.after(0, lambda: self._set_status("✅ IP 配置已还原", COLORS["green"]))
 
     # ----- 一键重置 -----
     def _do_all_reset(self):
@@ -956,9 +859,9 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         threading.Thread(target=self._thread_all_reset, daemon=True).start()
 
     def _thread_all_reset(self):
-        tool = NetworkResetTool(log_callback=functools.partial(self._safe_log))
+        tool = NetworkResetTool(log_callback=lambda m: self.after(0, lambda: self._log(m)))
         tool.run_full_reset()
-        self.after(0, functools.partial(self._set_running, False, ""))
+        self.after(0, lambda: self._set_running(False, ""))
         self.after(0, lambda: self.btn_restart.config(state="normal"))
 
     def _restart(self):
@@ -1130,7 +1033,7 @@ class DiagnosticPanel(tk.Frame):
 
     def _thread_quick_ping(self):
         diag = NetworkDiagnostic()
-        self.after(0, self._clear_results)
+        self.after(0, lambda: self._clear_results())
         row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row.pack(fill="x", pady=4, padx=4)
         card = self._card(row, "📡 Ping 连通性测试")
@@ -1166,7 +1069,7 @@ class DiagnosticPanel(tk.Frame):
         diag = NetworkDiagnostic()
         overview = diag.get_overview()
 
-        self.after(0, self._clear_results)
+        self.after(0, lambda: self._clear_results())
         row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row.pack(fill="x", pady=4, padx=4)
         card = self._card(row, "📋 网络状态总览")
@@ -1209,7 +1112,7 @@ class DiagnosticPanel(tk.Frame):
         diag = NetworkDiagnostic()
         output = diag.traceroute(target)
 
-        self.after(0, self._clear_results)
+        self.after(0, lambda: self._clear_results())
         row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row.pack(fill="both", expand=True, pady=4, padx=4)
         card = self._card(row, f"🛤️ 路由追踪: {target}")
@@ -1253,7 +1156,7 @@ class DiagnosticPanel(tk.Frame):
         diag = NetworkDiagnostic()
         ok, avg_ms, loss, output = diag.ping(target, count=4)
 
-        self.after(0, self._clear_results)
+        self.after(0, lambda: self._clear_results())
         row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row.pack(fill="both", expand=True, pady=4, padx=4)
         card = self._card(row, f"📡 Ping: {target}")
@@ -1280,7 +1183,6 @@ class DiagnosticPanel(tk.Frame):
     # ---- 一键完整诊断 ----
     def _do_full_diagnostic(self):
         if self._running: return
-
         self._set_running(True)
         self.diag_progress.configure(mode="determinate")
         self.diag_progress["value"] = 0
@@ -1295,16 +1197,10 @@ class DiagnosticPanel(tk.Frame):
             self.after(0, lambda: self.diag_progress.configure(value=pct))
             self.after(0, lambda: self._set_diag_status(f"⏳ {msg}", COLORS["blue"]))
 
-        try:
-            results = diag.run_full_diagnostic(progress_callback=progress)
-        except Exception as e:
-            self.after(0, lambda: self._set_diag_status(f"❌ 诊断失败: {e}", COLORS["red"]))
-            self.after(0, lambda: self._set_running(False))
-            return
-
+        results = diag.run_full_diagnostic(progress_callback=progress)
         self._latest_results = results
 
-        self.after(0, self._clear_results)
+        self.after(0, lambda: self._clear_results())
 
         # ---- 网络总览卡片 ----
         row0 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
@@ -1374,19 +1270,13 @@ class DiagnosticPanel(tk.Frame):
         if self._running:
             return
         self._set_running(True, "生成健康报告")
-        self.after(0, self._clear_results)
+        self.after(0, lambda: self._clear_results())
         self._set_diag_status("⏳ 生成健康报告...", COLORS["teal"])
         threading.Thread(target=self._thread_health_report, daemon=True).start()
 
     def _thread_health_report(self):
         diag = NetworkDiagnostic()
-        try:
-            results = diag.run_full_diagnostic()
-        except Exception as e:
-            self.after(0, lambda: self._set_diag_status(f"❌ 健康报告生成失败: {e}", COLORS["red"]))
-            self.after(0, lambda: self._set_running(False))
-            return
-
+        results = diag.run_full_diagnostic()
         self._latest_results = results
 
         ping_results = results.get('ping', [])
@@ -1512,7 +1402,15 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("Windows 网络工具箱 v2.4")
+        global _am_first
+        if not _am_first:
+            self.withdraw()
+            self.attributes("-topmost", True)
+            messagebox.showwarning("提示", "程序已在运行！\n请先关闭旧窗口。", parent=self)
+            self.destroy()
+            return
+
+        self.title("Windows 网络工具箱 v2.2")
         self.geometry("780x640")
         self.minsize(720, 580)
         self.configure(bg=COLORS["bg"])
@@ -1526,7 +1424,7 @@ class App(tk.Tk):
         tk.Label(topbar, text="🛠️  网络工具箱",
                  font=("微软雅黑", 14, "bold"), fg=COLORS["text"],
                  bg=COLORS["surface"]).pack(side="left")
-        tk.Label(topbar, text="v2.4  ·  重置 + 诊断",
+        tk.Label(topbar, text="v2.2  ·  重置 + 诊断",
                  font=("微软雅黑", 9), fg=COLORS["muted"],
                  bg=COLORS["surface"]).pack(side="left", padx=10)
 
@@ -1572,7 +1470,7 @@ class App(tk.Tk):
         # 底部版本信息
         footer = tk.Frame(self, bg=COLORS["surface"], pady=4)
         footer.pack(fill="x")
-        tk.Label(footer, text="Network Reset Tool v2.4  ·  michaelqiu",
+        tk.Label(footer, text="Network Reset Tool v2.2  ·  cpufreestyle",
                  font=("微软雅黑", 8), fg=COLORS["muted"], bg=COLORS["surface"]).pack(side="right", padx=10)
 
     def _switch_tab(self, tid):
@@ -1594,17 +1492,6 @@ class App(tk.Tk):
 
 
 if __name__ == "__main__":
-    # 单例检测
-    if not _am_first:
-        import tkinter as tk_temp
-        from tkinter import messagebox as mb_temp
-        root_temp = tk_temp.Tk()
-        root_temp.withdraw()
-        root_temp.attributes("-topmost", True)
-        mb_temp.showwarning("提示", "程序已在运行！\n请先关闭旧窗口。", parent=root_temp)
-        root_temp.destroy()
-        sys.exit(1)
-    
     app = App()
-    app.protocol("WM_DELETE_WINDOW", lambda: (_release_singleton(), app.destroy()))
+    app.protocol("WM_DELETE_WINDOW", lambda: app.destroy())
     app.mainloop()
