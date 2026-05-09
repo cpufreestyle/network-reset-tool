@@ -1140,13 +1140,15 @@ class DiagnosticPanel(tk.Frame):
         all_ok = True
         for target, label, color_name in NetworkDiagnostic.PING_TARGETS:
             ok, avg_ms, loss, _ = diag.ping(target)
+            # 捕获 avg_ms=None 边界情况
+            latency_str = f"{avg_ms}ms" if avg_ms is not None else "<1ms"
             if ok:
-                self.after(0, lambda r=card, t=label, m=avg_ms, l=loss:
-                           self._result_ok(r, f"{t} ({target})", f"延迟 {m}ms · 丢包 {l}%"))
+                self.after(0, lambda r=card, t=label, m=latency_str, l=loss, tgt=target:
+                           self._result_ok(r, f"{t} ({tgt})", f"延迟 {m} · 丢包 {l}%"))
             else:
                 all_ok = False
-                self.after(0, lambda r=card, t=label, l=loss:
-                           self._result_fail(r, f"{t} ({target})", f"丢包率 {l}%"))
+                self.after(0, lambda r=card, t=label, l=loss, tgt=target:
+                           self._result_fail(r, f"{t} ({tgt})", f"丢包率 {l}%"))
 
         self.after(0, lambda: self._set_running(False))
         self.diag_progress.stop()
@@ -1260,9 +1262,10 @@ class DiagnosticPanel(tk.Frame):
         row.pack(fill="both", expand=True, pady=4, padx=4)
         card = self._card(row, f"📡 Ping: {target}")
 
+        latency_str = f"{avg_ms}ms" if avg_ms is not None else "<1ms"
         if ok:
-            self.after(0, lambda r=card, m=avg_ms, l=loss:
-                       self._result_ok(r, f"连接正常", f"延迟 {m}ms · 丢包率 {l}%"))
+            self.after(0, lambda r=card, m=latency_str, l=loss:
+                       self._result_ok(r, f"连接正常", f"延迟 {m} · 丢包率 {l}%"))
         else:
             self.after(0, lambda r=card, l=loss:
                        self._result_fail(r, f"连接失败", f"丢包率 {l}%"))
@@ -1326,14 +1329,15 @@ class DiagnosticPanel(tk.Frame):
         ping_results = results.get('ping', [])
         for p in ping_results:
             color = COLORS[p['color']]
+            latency_str = f"{p['avg_ms']}ms" if p['avg_ms'] is not None else "<1ms"
             if p['ok']:
-                self.after(0, lambda r=card1, p=p:
-                           self._result_ok(r, f"{p['label']} ({p['target']})",
-                                          f"延迟 {p['avg_ms']}ms · 丢包 {p['loss']}%"))
+                self.after(0, lambda r=card1, lbl=p['label'], tgt=p['target'], m=latency_str, los=p['loss']:
+                           self._result_ok(r, f"{lbl} ({tgt})",
+                                          f"延迟 {m} · 丢包 {los}%"))
             else:
-                self.after(0, lambda r=card1, p=p:
-                           self._result_fail(r, f"{p['label']} ({p['target']})",
-                                             f"丢包率 {p['loss']}%"))
+                self.after(0, lambda r=card1, lbl=p['label'], tgt=p['target'], los=p['loss']:
+                           self._result_fail(r, f"{lbl} ({tgt})",
+                                             f"丢包率 {los}%"))
 
         # ---- DNS 卡片 ----
         row2 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
@@ -1342,12 +1346,12 @@ class DiagnosticPanel(tk.Frame):
         dns_results = results.get('dns', [])
         for d in dns_results:
             if d['ok']:
-                self.after(0, lambda r=card2, d=d:
-                           self._result_ok(r, f"{d['label']} ({d['dns']})",
-                                          f"解析成功 → {d['ip']}"))
+                self.after(0, lambda r=card2, lbl=d['label'], dns=d['dns'], ip=d['ip']:
+                           self._result_ok(r, f"{lbl} ({dns})",
+                                          f"解析成功 → {ip}"))
             else:
-                self.after(0, lambda r=card2, d=d:
-                           self._result_fail(r, f"{d['label']} ({d['dns']})", "解析失败"))
+                self.after(0, lambda r=card2, lbl=d['label'], dns=d['dns']:
+                           self._result_fail(r, f"{lbl} ({dns})", "解析失败"))
 
         # ---- 结论 ----
         row3 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
