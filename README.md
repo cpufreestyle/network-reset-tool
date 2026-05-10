@@ -5,11 +5,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/Python-3.6%2B-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-v2.2-orange.svg)]()
+[![Version](https://img.shields.io/badge/Version-v3.0-orange.svg)]()
 
 修复网络连接问题 · 重置 Winsock/TCP/IP · 清除 DNS/ARP 缓存 · 网络诊断（Ping/DNS/Traceroute）
 
-[下载 exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/tag/v2.2) · [报告问题](https://gitee.com/cpufreestyle/network-reset-tool/issues) · [使用说明](#使用方法)
+[下载 exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/tag/v3.0) · [报告问题](https://gitee.com/cpufreestyle/network-reset-tool/issues) · [使用说明](#使用方法)
 
 ---
 
@@ -28,11 +28,33 @@
 
 | 版本 | 平台 | 文件 | 说明 |
 |:---:|:---:|:---:|:---|
-| v2.2 | Windows | [NetworkReset.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v2.2/NetworkReset.exe) | GUI 图形界面版（免安装） |
+| v3.0 | Windows | [NetworkResetTool.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.0/NetworkResetTool.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v2.0 | macOS | network_reset_macos.py | GUI 图形界面版（需 sudo） |
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
+
+## 新功能 (v3.0)
+
+### 修复：网络状态总览乱码问题
+
+- **根因**：PowerShell 输出编码与 Python 解码不匹配，导致中文显示为乱码或报错
+- **修复**：`_run_ps()` 改为获取原始字节流，自动尝试 UTF-16LE/UTF-8/GBK 解码
+- **效果**：网络总览、网卡信息等功能现在可以正确显示中文
+
+### 修复：网络诊断面板多处 Bug
+
+- 修复 Lambda 闭包变量捕获问题（`_thread_quick_ping`、`_thread_overview`、`_thread_full_diagnostic`）
+- 修复 `float()` 转换错误（`rc()` 函数遇到非数字值崩溃）
+- 修复自定义 Ping 按钮未加入禁用列表的问题
+- 修复 `_do_health_report` 调用 `_set_running` 参数错误
+
+### 其他改进
+
+- 改进版本号管理（`__version__` 统一管理）
+- 清理无用 exe 文件，减少 Release 附件混乱
+
+---
 
 ## 新功能 (v2.2)
 
@@ -54,7 +76,7 @@
 
 ### Windows GUI 版（推荐）
 
-1. 下载 [NetworkReset.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v2.2/NetworkReset.exe)
+1. 下载 [NetworkResetTool.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.0/NetworkResetTool.exe)
 2. 右键选择 **以管理员身份运行**
 3. 切换到 **网络诊断** 标签，先诊断问题
 4. 或切换到 **网络重置** 标签，点击 **一键重置全部**
@@ -77,7 +99,7 @@ sudo python3 network_reset_macos.py
 
 `
 network-reset-tool/
-  network_reset_gui.py      # Windows GUI 源码 (v2.2)
+  network_reset_gui.py      # Windows GUI 源码 (v3.0)
   network_reset_macos.py    # macOS GUI 源码 (v2.0)
   network-reset.bat         # Windows 命令行版 (v1.0)
   .gitignore
