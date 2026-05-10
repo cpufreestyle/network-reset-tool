@@ -1,0 +1,5 @@
+The environment does not allow connecting to the splash screen. Did bootloader fail to initialize it?
+Traceback (most recent call last):
+  File "pyi_splash.py", line 108, in <module>
+  File "<frozen os>", line 679, in __getitem__
+KeyError: '_PYI_SPLASH_IPC'

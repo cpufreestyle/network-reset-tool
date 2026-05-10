@@ -1659,7 +1659,27 @@ if __name__ == "__main__":
         mb_temp.showwarning("提示", "程序已在运行！\n请先关闭旧窗口。", parent=root_temp)
         root_temp.destroy()
         sys.exit(1)
-    
-    app = App()
-    app.protocol("WM_DELETE_WINDOW", lambda: (_release_singleton(), app.destroy()))
-    app.mainloop()
+
+    try:
+        app = App()
+        app.protocol("WM_DELETE_WINDOW", lambda: (_release_singleton(), app.destroy()))
+        app.mainloop()
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        # 写入日志文件
+        log_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'crash.log')
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(f"Crash at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(error_msg)
+        # 如果是打包环境，显示错误弹窗
+        try:
+            import tkinter as tk_err
+            from tkinter import messagebox as mb_err
+            root_err = tk_err.Tk()
+            root_err.withdraw()
+            mb_err.showerror("程序错误", f"{error_msg[:500]}\n\n日志已保存: {log_path}", parent=root_err)
+            root_err.destroy()
+        except Exception:
+            pass
+        sys.exit(1)
