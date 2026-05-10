@@ -28,7 +28,7 @@
 
 | 版本 | 平台 | 文件 | 说明 |
 |:---:|:---:|:---:|:---|
-| v3.0 | Windows | [NetworkResetTool.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.0/NetworkResetTool.exe) | GUI 图形界面版（免安装） |
+| v3.0 | Windows | [网络诊断修复.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.0/网络诊断修复.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v2.0 | macOS | network_reset_macos.py | GUI 图形界面版（需 sudo） |
 
@@ -76,7 +76,7 @@
 
 ### Windows GUI 版（推荐）
 
-1. 下载 [NetworkResetTool.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.0/NetworkResetTool.exe)
+1. 下载 [网络诊断修复.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.0/网络诊断修复.exe)
 2. 右键选择 **以管理员身份运行**
 3. 切换到 **网络诊断** 标签，先诊断问题
 4. 或切换到 **网络重置** 标签，点击 **一键重置全部**
