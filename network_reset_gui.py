@@ -816,14 +816,20 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         self.after(0, self._refresh_dns_status)
 
     def _refresh_dns_status(self):
-        """刷新当前 DNS 显示"""
-        tool = NetworkResetTool()
-        dns_list, mode = tool.get_current_dns()
-        if dns_list:
-            mode_text = "自动" if mode == "dhcp" else "手动"
-            self.dns_current_label.config(text=f"当前: {', '.join(dns_list)} [{mode_text}]")
-        else:
-            self.dns_current_label.config(text="当前: 获取中...")
+        """刷新当前 DNS 显示（异步，不阻塞主线程）"""
+        self.dns_current_label.config(text="当前: 获取中...")
+
+        def _worker():
+            tool = NetworkResetTool()
+            dns_list, mode = tool.get_current_dns()
+            if dns_list:
+                mode_text = "自动" if mode == "dhcp" else "手动"
+                text = f"当前: {', '.join(dns_list)} [{mode_text}]"
+            else:
+                text = "当前: 未知"
+            self.after(0, lambda: self.dns_current_label.config(text=text))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _log(self, msg):
         """修复: 确保线程安全"""
@@ -1534,10 +1540,20 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
 
+        # 关闭 PyInstaller 启动画面
+        try:
+            import pyi_splash
+            pyi_splash.close()
+        except Exception:
+            pass
+
         self.title("Windows 网络工具箱 v3.0 ✨")
         self.geometry("780x640")
         self.minsize(720, 580)
         self.configure(bg=COLORS["bg"])
+
+        # 先让窗口显示出来，再做后续初始化
+        self.update_idletasks()
 
         # ===== 母亲节问候 =====
         try:
