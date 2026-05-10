@@ -397,30 +397,33 @@ Write-Output ($out -join "`n")
         return results
 
     def ping(self, target, count=4):
-        """Ping 一个目标，使用 PowerShell Test-Connection，返回 (ok, avg_ms, loss_pct, output)"""
+        """Ping 一个目标，使用 cmd /c ping，返回 (ok, avg_ms, loss_pct, output)"""
         try:
-            ps_script = 'Test-Connection -ComputerName {} -Count {} -ErrorAction Stop | Select-Object @{{N="AvgMs";E={{[math]::Round($_.ResponseTime,0)}}}, @{{N="Loss";E={{if($_.PingSucceeded){{0}}else{{100}}}}}} | Format-List'.format(target, count)
             result = subprocess.run(
-                ['powershell', '-NoProfile', '-Command', ps_script],
+                f'cmd /c ping -n {count} {target}',
+                shell=True,
                 capture_output=True, text=True, encoding='utf-8', timeout=15
             )
             output = result.stdout or ''
-            # 解析平均延迟
+            # 判断是否收到回复
+            has_reply = ('Reply from' in output or '来自' in output or '回复' in output)
+            if not has_reply:
+                return False, None, 100, output.strip()
+            # 解析平均延迟（英文 & 中文 Windows 均适配）
             avg_ms = None
-            match = re.search(r'AvgMs\s*:\s*(\d+)', output)
-            if match:
-                avg_ms = int(match.group(1))
+            m = re.search(r'Average = (\d+)ms|平均 = (\d+)ms', output)
+            if m:
+                avg_ms = int(m.group(1) or m.group(2))
             # 解析丢包率
-            loss = 100
-            match = re.search(r'Loss\s*:\s*(\d+)', output)
-            if match:
-                loss = int(match.group(1))
-            ok = loss < 100 and avg_ms is not None
-            return ok, avg_ms, loss, output
+            loss = 0
+            m = re.search(r'\((\d+)% loss\)|\((\d+)% 丢失\)', output)
+            if m:
+                loss = int(m.group(1) or m.group(2))
+            return True, avg_ms, loss, output.strip()
         except subprocess.TimeoutExpired:
-            return False, None, 100, ""
-        except Exception:
-            return False, None, 100, ""
+            return False, None, 100, 'timeout'
+        except Exception as e:
+            return False, None, 100, str(e)
 
     def dns_lookup(self, target, dns_server=None):
         """DNS 解析测试 - 使用 PowerShell Resolve-DnsName"""
