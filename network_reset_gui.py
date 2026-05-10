@@ -136,9 +136,10 @@ if ($adapters) {
 '''
         try:
             result = subprocess.run(['powershell', '-NoProfile', '-Command', ps_script],
-                                   capture_output=True, text=True, encoding='utf-8')
-            if result.stdout.strip():
-                for line in result.stdout.strip().split('\n'):
+                                   capture_output=True, timeout=10)
+            stdout = self._decode_output(result.stdout)
+            if stdout.strip():
+                for line in stdout.strip().split('\n'):
                     if line.strip():
                         parts = line.strip().split('|')
                         if len(parts) >= 5:
@@ -230,8 +231,9 @@ if ($adapters) {
 '''
         try:
             result = subprocess.run(['powershell', '-NoProfile', '-Command', ps_script],
-                                   capture_output=True, text=True, encoding='utf-8')
-            lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip() and '|' in l]
+                                   capture_output=True, timeout=10)
+            stdout = self._decode_output(result.stdout)
+            lines = [l.strip() for l in stdout.strip().split('\n') if l.strip() and '|' in l]
             if not lines:
                 return [], 'unknown'
             # 取第一个有 DNS 的适配器
@@ -396,27 +398,40 @@ Write-Output ($out -join "`n")
                 results.append((k, v))
         return results
 
+    @staticmethod
+    def _decode_output(raw_bytes):
+        """解码 subprocess 输出，中文 Windows 先尝试 GBK 再回退 UTF-8"""
+        try:
+            return raw_bytes.decode('gbk')
+        except (UnicodeDecodeError, LookupError):
+            return raw_bytes.decode('utf-8', errors='replace')
+
     def ping(self, target, count=4):
         """Ping 一个目标，使用 cmd /c ping，返回 (ok, avg_ms, loss_pct, output)"""
         try:
-            result = subprocess.run(
+            # 先用 GBK 解码（中文 Windows 默认代码页 936），回退 UTF-8
+            raw = subprocess.run(
                 f'cmd /c ping -n {count} {target}',
                 shell=True,
-                capture_output=True, text=True, encoding='utf-8', timeout=15
-            )
-            output = result.stdout or ''
-            # 判断是否收到回复
-            has_reply = ('Reply from' in output or '来自' in output or '回复' in output)
+                capture_output=True, timeout=15
+            ).stdout or b''
+            try:
+                output = raw.decode('gbk')
+            except (UnicodeDecodeError, LookupError):
+                output = raw.decode('utf-8', errors='replace')
+            # 判断是否收到回复（英文 & 中文）
+            has_reply = ('Reply from' in output or '来自' in output
+                         or '回复' in output or 'bytes=' in output)
             if not has_reply:
                 return False, None, 100, output.strip()
             # 解析平均延迟（英文 & 中文 Windows 均适配）
             avg_ms = None
-            m = re.search(r'Average = (\d+)ms|平均 = (\d+)ms', output)
+            m = re.search(r'Average\s*=\s*(\d+)ms|平均\s*=\s*(\d+)ms', output)
             if m:
                 avg_ms = int(m.group(1) or m.group(2))
             # 解析丢包率
             loss = 0
-            m = re.search(r'\((\d+)% loss\)|\((\d+)% 丢失\)', output)
+            m = re.search(r'\((\d+)%\s*loss\)|\((\d+)%\s*丢失\)', output)
             if m:
                 loss = int(m.group(1) or m.group(2))
             return True, avg_ms, loss, output.strip()
@@ -434,9 +449,9 @@ Write-Output ($out -join "`n")
                 ps_script = f'Resolve-DnsName {target} -DnsOnly -ErrorAction Stop | Select-Object IPAddress,NameHost | Format-List'
             result = subprocess.run(
                 ['powershell', '-NoProfile', '-Command', ps_script],
-                capture_output=True, text=True, encoding='utf-8', timeout=10
+                capture_output=True, timeout=10
             )
-            output = result.stdout or ''
+            output = self._decode_output(result.stdout)
             # 提取所有 IPv4 地址
             ipv4_addrs = re.findall(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', output)
             ip = ipv4_addrs[0] if ipv4_addrs else None
@@ -453,9 +468,9 @@ Write-Output ($out -join "`n")
             ps_script = f'Test-NetConnection -ComputerName {target} -TraceRoute -WarningAction SilentlyContinue | Select-Object RemoteAddress,RemotePort,TcpTestSucceeded,TraceRoute | Format-List'
             result = subprocess.run(
                 ['powershell', '-NoProfile', '-Command', ps_script],
-                capture_output=True, text=True, encoding='utf-8', timeout=60
+                capture_output=True, timeout=60
             )
-            return result.stdout or ''
+            return self._decode_output(result.stdout)
         except Exception:
             return "追踪失败"
 
@@ -721,8 +736,8 @@ $adapter = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object 
 if ($adapter) { Write-Output $adapter.NetConnectionID }
 '''
             result = subprocess.run(['powershell', '-NoProfile', '-Command', ps1],
-                                   capture_output=True, text=True, encoding='utf-8', timeout=5)
-            name = result.stdout.strip()
+                                   capture_output=True, timeout=5)
+            name = self._decode_output(result.stdout).strip()
             if name:
                 return name
         except Exception as e:
@@ -735,8 +750,8 @@ $adapter = Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.NetConnectionS
 if ($adapter) { Write-Output $adapter.NetConnectionID }
 '''
             result = subprocess.run(['powershell', '-NoProfile', '-Command', ps2],
-                                   capture_output=True, text=True, encoding='utf-8', timeout=5)
-            name = result.stdout.strip()
+                                   capture_output=True, timeout=5)
+            name = self._decode_output(result.stdout).strip()
             if name:
                 return name
         except Exception as e:
@@ -744,8 +759,8 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
 
         # 方法3: 使用 ipconfig 解析
         try:
-            result = subprocess.run(['ipconfig'], capture_output=True, text=True, encoding='utf-8', timeout=5)
-            output = result.stdout
+            result = subprocess.run(['ipconfig'], capture_output=True, timeout=5)
+            output = self._decode_output(result.stdout)
             # 查找有 IPv4 地址的适配器
             for line in output.split('\n'):
                 if 'IPv4' in line or '适配器' in line:
