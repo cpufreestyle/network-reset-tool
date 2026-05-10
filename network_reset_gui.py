@@ -397,58 +397,62 @@ Write-Output ($out -join "`n")
         return results
 
     def ping(self, target, count=4):
-        """Ping 一个目标，返回 (ok, avg_ms, loss_pct, output)"""
+        """Ping 一个目标，使用 PowerShell Test-Connection，返回 (ok, avg_ms, loss_pct, output)"""
         try:
+            ps_script = 'Test-Connection -ComputerName {} -Count {} -ErrorAction Stop | Select-Object @{{N="AvgMs";E={{[math]::Round($_.ResponseTime,0)}}}, @{{N="Loss";E={{if($_.PingSucceeded){{0}}else{{100}}}}}} | Format-List'.format(target, count)
             result = subprocess.run(
-                ['ping', '-n', str(count), target],
-                capture_output=True, text=True, encoding='gbk', timeout=10
+                ['powershell', '-NoProfile', '-Command', ps_script],
+                capture_output=True, text=True, encoding='utf-8', timeout=15
             )
-            output = result.stdout
+            output = result.stdout or ''
             # 解析平均延迟
             avg_ms = None
-            match = re.search(r'(?:平均|Average)\s*=\s*(\d+)', output)
+            match = re.search(r'AvgMs\s*:\s*(\d+)', output)
             if match:
                 avg_ms = int(match.group(1))
-            # 解析丢包率 - 找 "XXX% loss" 格式（统计行）
+            # 解析丢包率
             loss = 100
-            match = re.search(r'(\d+)%\s+loss', output, re.IGNORECASE)
+            match = re.search(r'Loss\s*:\s*(\d+)', output)
             if match:
                 loss = int(match.group(1))
             ok = loss < 100 and avg_ms is not None
             return ok, avg_ms, loss, output
+        except subprocess.TimeoutExpired:
+            return False, None, 100, ""
         except Exception:
             return False, None, 100, ""
 
     def dns_lookup(self, target, dns_server=None):
-        """DNS 解析测试 - 使用 nslookup 获取 IP 地址"""
+        """DNS 解析测试 - 使用 PowerShell Resolve-DnsName"""
         try:
             if dns_server:
-                cmd = ['nslookup', target, dns_server]
+                ps_script = f'Resolve-DnsName {target} -DnsOnly -Server {dns_server} -ErrorAction Stop | Select-Object IPAddress,NameHost | Format-List'
             else:
-                cmd = ['nslookup', target]
-            result = subprocess.run(cmd, capture_output=True, text=True,
-                                   encoding='gbk', timeout=5)
-            output = result.stdout
+                ps_script = f'Resolve-DnsName {target} -DnsOnly -ErrorAction Stop | Select-Object IPAddress,NameHost | Format-List'
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command', ps_script],
+                capture_output=True, text=True, encoding='utf-8', timeout=10
+            )
+            output = result.stdout or ''
             # 提取所有 IPv4 地址
             ipv4_addrs = re.findall(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', output)
-            # nslookup 输出中，第一个 IPv4 是 DNS 服务器自身，后续才是解析结果
-            ip = ipv4_addrs[1] if len(ipv4_addrs) > 1 else None
+            ip = ipv4_addrs[0] if ipv4_addrs else None
             # 检查是否解析成功
-            name_resolved = ("can't find" not in output.lower()
-                             and '找不到' not in output
-                             and ip is not None)
+            name_resolved = (ip is not None and "can't find" not in output.lower()
+                             and '找不到' not in output)
             return name_resolved, ip, output
         except Exception as e:
             return False, None, str(e)
 
     def traceroute(self, target):
-        """Tracert 路由追踪"""
+        """Tracert 路由追踪 - 使用 PowerShell"""
         try:
+            ps_script = f'Test-NetConnection -ComputerName {target} -TraceRoute -WarningAction SilentlyContinue | Select-Object RemoteAddress,RemotePort,TcpTestSucceeded,TraceRoute | Format-List'
             result = subprocess.run(
-                ['tracert', '-d', '-h', '20', target],
-                capture_output=True, text=True, encoding='gbk', timeout=60
+                ['powershell', '-NoProfile', '-Command', ps_script],
+                capture_output=True, text=True, encoding='utf-8', timeout=60
             )
-            return result.stdout
+            return result.stdout or ''
         except Exception:
             return "追踪失败"
 
@@ -737,7 +741,7 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
 
         # 方法3: 使用 ipconfig 解析
         try:
-            result = subprocess.run(['ipconfig'], capture_output=True, text=True, encoding='gbk', timeout=5)
+            result = subprocess.run(['ipconfig'], capture_output=True, text=True, encoding='utf-8', timeout=5)
             output = result.stdout
             # 查找有 IPv4 地址的适配器
             for line in output.split('\n'):
@@ -981,7 +985,7 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
 
     def _restart(self):
         if messagebox.askyesno("确认重启", "网络重置后需要重启电脑才能生效\n\n确定要立即重启吗？"):
-            subprocess.run('shutdown /r /t 5', shell=True)
+            subprocess.run(['powershell', '-NoProfile', '-Command', 'Restart-Computer -Force -Wait 5'])
             self._log("5秒后重启电脑...")
 
     def _quit(self):
