@@ -345,13 +345,22 @@ class NetworkDiagnostic:
         if self.log_callback:
             self.log_callback(msg, color)
 
-    def _run_ps(self, script, timeout=10, enc='utf-8'):
+    def _run_ps(self, script, timeout=10):
         try:
             result = subprocess.run(
                 ['powershell', '-NoProfile', '-Command', script],
-                capture_output=True, text=True, encoding=enc, timeout=timeout
+                capture_output=True, text=False, timeout=timeout
             )
-            return result.stdout.strip()
+            # PowerShell outputs UTF-8 on modern Windows (or system OEM codepage)
+            output = result.stdout
+            # Try UTF-8 first (most common), then GBK (Chinese Windows), then UTF-16LE
+            for enc in ('utf-8', 'gbk', 'utf-16-le'):
+                try:
+                    return output.decode(enc).strip()
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            # Fallback: replace errors
+            return output.decode('utf-8', errors='replace').strip()
         except Exception as e:
             return ""
 
@@ -366,7 +375,8 @@ $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object
 $active = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
 if ($active) {
     $cfg = Get-NetIPConfiguration -InterfaceIndex $active.ifIndex -ErrorAction SilentlyContinue
-    $out += "状态|up|$($active.Name)"
+    $out += "状态|up"
+    $out += "接口|$($active.Name)"
     $out += "描述|$($active.InterfaceDescription)"
     $out += "MAC|$($active.MacAddress)"
     $out += "速度|$($active.LinkSpeed)"
@@ -1024,7 +1034,8 @@ class DiagnosticPanel(tk.Frame):
         tk.Entry(ctrl, textvariable=self.custom_target, font=("Consolas", 10),
                  bg=COLORS["surface"], fg=COLORS["text"], insertbackground=COLORS["text"],
                  relief="flat", bd=0, width=18).pack(side="left", padx=(10, 4))
-        styled_btn(ctrl, "Ping", self._do_custom_ping, COLORS["orange"], font_size=11).pack(side="left")
+        self.btn_custom_ping = styled_btn(ctrl, "Ping", self._do_custom_ping, COLORS["orange"], font_size=11)
+        self.btn_custom_ping.pack(side="left")
 
         # 进度条
         self.diag_progress = ttk.Progressbar(self, mode="determinate",
@@ -1379,7 +1390,7 @@ class DiagnosticPanel(tk.Frame):
     def _do_health_report(self):
         if self._running:
             return
-        self._set_running(True, "生成健康报告")
+        self._set_running(True)
         self.after(0, self._clear_results)
         self._set_diag_status("⏳ 生成健康报告...", COLORS["teal"])
         threading.Thread(target=self._thread_health_report, daemon=True).start()
@@ -1441,9 +1452,14 @@ class DiagnosticPanel(tk.Frame):
         # 渲染卡片
         def rc(parent, icon, title, value, sub=None, color=None):
             card = self._card(parent, icon + " " + title, bg="#2a2a3e")
-            vc = color or (COLORS["green"] if float(value.rstrip('%')) >= 80
-                           else COLORS["yellow"] if float(value.rstrip('%')) >= 50
-                           else COLORS["red"])
+            if color:
+                vc = color
+            else:
+                try:
+                    num = float(value.rstrip('%'))
+                    vc = COLORS["green"] if num >= 80 else COLORS["yellow"] if num >= 50 else COLORS["red"]
+                except (ValueError, TypeError):
+                    vc = COLORS["subtext"]
             lbl = tk.Label(card, text=value, font=("微软雅黑", 16, "bold"),
                            fg=vc, bg="#2a2a3e")
             lbl.pack(pady=(4, 0))
