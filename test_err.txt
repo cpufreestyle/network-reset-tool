@@ -1,0 +1,12 @@
+The environment does not allow connecting to the splash screen. Did bootloader fail to initialize it?
+Traceback (most recent call last):
+  File "pyi_splash.py", line 108, in <module>
+  File "<frozen os>", line 679, in __getitem__
+KeyError: '_PYI_SPLASH_IPC'
+Exception in thread Thread-23 (_thread_quick_ping):
+Traceback (most recent call last):
+  File "threading.py", line 1045, in _bootstrap_inner
+  File "threading.py", line 982, in run
+  File "network_reset_gui.py", line 1158, in _thread_quick_ping
+  File "tkinter\__init__.py", line 2471, in pack_configure
+_tkinter.TclError: bad window path name ".!frame3.!diagnosticpanel.!frame3.!canvas.!frame.!frame9"
