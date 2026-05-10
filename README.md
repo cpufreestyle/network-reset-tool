@@ -1,6 +1,10 @@
-# Network Reset Tool
+# 网络诊断修复 v3.0
 
-**一键重置网络配置，自动保留静态 IP**
+<p align="center">
+  <img src="https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.0/cover.png" width="800" alt="网络诊断修复" />
+</p>
+
+**一键重置网络配置，自动保留静态 IP · 智能网络诊断**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)]()
