@@ -37,7 +37,7 @@ for f in files:
             print(f"  Delete failed: {e}")
 
 # 上传新 exe
-exe_path = r'D:\qclaw-workspace\network-reset-tool\dist\网络急救箱.exe'
+exe_path = r'D:\qclaw-workspace\network-reset-tool\dist\网络工具箱.exe'
 exe_size = os.path.getsize(exe_path)
 print(f"\n上传: {os.path.basename(exe_path)} ({exe_size:,} bytes)")
 
@@ -54,7 +54,7 @@ body.extend(b'Content-Disposition: form-data; name="access_token"\r\n\r\n')
 body.extend(f'{TOKEN}\r\n'.encode())
 # file 字段
 body.extend(f'--{boundary}\r\n'.encode())
-fname_header = 'Content-Disposition: form-data; name="file"; filename="网络急救箱.exe"\r\n'
+fname_header = 'Content-Disposition: form-data; name="file"; filename="网络工具箱.exe"\r\n'
 body.extend(fname_header.encode('utf-8'))
 body.extend(b'Content-Type: application/octet-stream\r\n\r\n')
 body.extend(exe_data)
