@@ -216,6 +216,52 @@ if ($adapters) {
                     cmd = f'netsh interface ip set dns "{name}" static {dns} primary'
                     self.run_cmd(cmd)
 
+    def _backup_proxy(self):
+        """备份系统代理设置（保护 Clash 等代理软件配置）"""
+        self.log("[代理] 备份系统代理设置...")
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                  r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+            try:
+                self._proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+            except FileNotFoundError:
+                self._proxy_enable = 0
+            try:
+                self._proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
+            except FileNotFoundError:
+                self._proxy_server = ""
+            winreg.CloseKey(key)
+            self.log(f"  ✓ 已备份: ProxyEnable={self._proxy_enable}, ProxyServer={self._proxy_server}")
+        except Exception as e:
+            self.log(f"  ✗ 备份失败: {e}")
+            self._proxy_enable = None
+            self._proxy_server = None
+
+    def _restore_proxy(self):
+        """恢复系统代理设置"""
+        if not hasattr(self, '_proxy_enable') or self._proxy_enable is None:
+            self.log("[代理] 无代理配置需要恢复")
+            return
+        self.log("[代理] 恢复系统代理设置...")
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                  r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                                  0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, self._proxy_enable)
+            if self._proxy_server:
+                winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, self._proxy_server)
+            winreg.CloseKey(key)
+            self.log(f"  ✓ 已恢复: ProxyEnable={self._proxy_enable}, ProxyServer={self._proxy_server}")
+            # 通知系统代理设置已变更
+            import ctypes
+            ctypes.windll.Wininet.InternetSetOptionW(0, 39, 0, 0)  # INTERNET_OPTION_SETTINGS_CHANGED
+            ctypes.windll.Wininet.InternetSetOptionW(0, 37, 0, 0)  # INTERNET_OPTION_REFRESH
+        except Exception as e:
+            self.log(f"  ✗ 恢复失败: {e}")
+
+
     def get_current_dns(self, adapter_name=None):
         """获取当前 DNS 服务器地址"""
         ps_script = '''
@@ -293,6 +339,7 @@ if ($adapters) {
         self.log("=" * 50)
         self.log("")
         self.backup_static_ip()
+        self._backup_proxy()
         self.log("")
         if self._cancel:
             return
@@ -312,6 +359,7 @@ if ($adapters) {
         self.renew_dhcp()
         self.log("")
         self.restore_static_ip()
+        self._restore_proxy()
         self.log("")
         self.log("=" * 50)
         self.log("🎉 网络重置完成！")
