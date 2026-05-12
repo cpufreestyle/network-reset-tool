@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Windows 网络重置工具 - GUI 版本 v3.0
+Windows 网络重置工具 - GUI 版本 v3.1
 修复：
   1. DNS切换"未找到活动网卡"问题 - 改进适配器检测逻辑
   2. 日志界面闪退 - 修复线程安全问题
@@ -1569,7 +1569,7 @@ class App(tk.Tk):
         except Exception:
             pass
 
-        self.title("Windows 网络工具箱 v3.0 ✨")
+        self.title("网络工具箱 v3.1 ✨")
         self.geometry("780x640")
         self.minsize(720, 580)
         self.configure(bg=COLORS["bg"])
@@ -1586,7 +1586,7 @@ class App(tk.Tk):
                 "祝天下所有妈妈：\n"
                 "健康平安，笑口常开！\n\n"
                 "❤️ 感谢您一直以来的付出 ❤️\n\n"
-                "—— 您的网络工具箱 v3.0"
+                "—— 您的网络工具箱 v3.1"
             )
             # 母亲节是每年5月第二个周日，2026年是5月10日
             if today.month == 5 and today.day in [9, 10]:
@@ -1603,7 +1603,7 @@ class App(tk.Tk):
         tk.Label(topbar, text="🛠️  网络工具箱",
                  font=("微软雅黑", 14, "bold"), fg=COLORS["text"],
                  bg=COLORS["surface"]).pack(side="left")
-        tk.Label(topbar, text="v3.0  ·  重置 + 诊断  ·  🌸 母亲节快乐！",
+        tk.Label(topbar, text="v3.1  ·  重置 + 诊断  ·  🌸 母亲节快乐！",
                  font=("微软雅黑", 9), fg=COLORS["pink"],
                  bg=COLORS["surface"]).pack(side="left", padx=10)
 
@@ -1649,7 +1649,7 @@ class App(tk.Tk):
         # 底部版本信息
         footer = tk.Frame(self, bg=COLORS["surface"], pady=4)
         footer.pack(fill="x")
-        tk.Label(footer, text="Network Reset Tool v3.0  ·  michaelqiu  ·  🌷 5月10日 母亲节",
+        tk.Label(footer, text="Network Reset Tool v3.1  ·  michaelqiu  ·  🌷 5月10日 母亲节",
                  font=("微软雅黑", 8), fg=COLORS["muted"], bg=COLORS["surface"]).pack(side="right", padx=10)
 
     def _switch_tab(self, tid):
