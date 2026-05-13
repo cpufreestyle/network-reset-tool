@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Windows 网络重置工具 - GUI 版本 v3.1
-修复：
+修复:
   1. DNS切换"未找到活动网卡"问题 - 改进适配器检测逻辑
   2. 日志界面闪退 - 修复线程安全问题
   3. Lambda捕获bug - 使用functools.partial或默认参数
@@ -23,14 +23,14 @@ import ctypes
 import functools
 
 
-# ===== 单例检测（socket方式） =====
+# ===== 单例检测(socket方式) =====
 import socket
 
 _SINGLETON_PORT = 45678  # 固定端口
 _SINGLETON_SOCKET = None
 
 def _acquire_singleton():
-    """使用socket端口绑定实现单例检测（Windows友好）"""
+    """使用socket端口绑定实现单例检测(Windows友好)"""
     global _SINGLETON_SOCKET
     try:
         _SINGLETON_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -43,7 +43,7 @@ def _acquire_singleton():
 _am_first = _acquire_singleton()
 
 def _release_singleton():
-    """释放socket（程序退出时调用）"""
+    """释放socket(程序退出时调用)"""
     global _SINGLETON_SOCKET
     if _SINGLETON_SOCKET:
         try:
@@ -217,7 +217,7 @@ if ($adapters) {
                     self.run_cmd(cmd)
 
     def _backup_proxy(self):
-        """备份系统代理设置（保护 Clash 等代理软件配置）"""
+        """备份系统代理设置(保护 Clash 等代理软件配置)"""
         self.log("[代理] 备份系统代理设置...")
         try:
             import winreg
@@ -362,7 +362,7 @@ if ($adapters) {
         self._restore_proxy()
         self.log("")
         self.log("=" * 50)
-        self.log("🎉 网络重置完成！")
+        self.log("🎉 网络重置完成!")
         self.log("建议重启电脑使设置生效")
         self.log("=" * 50)
 
@@ -448,16 +448,16 @@ Write-Output ($out -join "`n")
 
     @staticmethod
     def _decode_output(raw_bytes):
-        """解码 subprocess 输出，中文 Windows 先尝试 GBK 再回退 UTF-8"""
+        """解码 subprocess 输出,中文 Windows 先尝试 GBK 再回退 UTF-8"""
         try:
             return raw_bytes.decode('gbk')
         except (UnicodeDecodeError, LookupError):
             return raw_bytes.decode('utf-8', errors='replace')
 
     def ping(self, target, count=4):
-        """Ping 一个目标，使用 cmd /c ping，返回 (ok, avg_ms, loss_pct, output)"""
+        """Ping 一个目标,使用 cmd /c ping,返回 (ok, avg_ms, loss_pct, output)"""
         try:
-            # 先用 GBK 解码（中文 Windows 默认代码页 936），回退 UTF-8
+            # 先用 GBK 解码(中文 Windows 默认代码页 936),回退 UTF-8
             raw = subprocess.run(
                 f'cmd /c ping -n {count} {target}',
                 shell=True,
@@ -467,12 +467,12 @@ Write-Output ($out -join "`n")
                 output = raw.decode('gbk')
             except (UnicodeDecodeError, LookupError):
                 output = raw.decode('utf-8', errors='replace')
-            # 判断是否收到回复（英文 & 中文）
+            # 判断是否收到回复(英文 & 中文)
             has_reply = ('Reply from' in output or '来自' in output
                          or '回复' in output or 'bytes=' in output)
             if not has_reply:
                 return False, None, 100, output.strip()
-            # 解析平均延迟（英文 & 中文 Windows 均适配）
+            # 解析平均延迟(英文 & 中文 Windows 均适配)
             avg_ms = None
             m = re.search(r'Average\s*=\s*(\d+)ms|平均\s*=\s*(\d+)ms', output)
             if m:
@@ -523,7 +523,7 @@ Write-Output ($out -join "`n")
             return "追踪失败"
 
     def run_full_diagnostic(self, progress_callback=None):
-        """运行完整诊断，返回结果字典"""
+        """运行完整诊断,返回结果字典"""
         results = {}
 
         # 1. 网络状态总览
@@ -615,7 +615,7 @@ def styled_btn(parent, text, cmd, bg, fg=None, font_size=10, bold=False, **kw):
 
 
 # ============================================================
-#  重置面板（Tab 1）
+#  重置面板(Tab 1)
 # ============================================================
 
 class ResetPanel(tk.Frame):
@@ -647,7 +647,7 @@ class ResetPanel(tk.Frame):
         self.btn_all.pack(fill="x", pady=(0, 10))
 
         tk.Frame(btn_area, bg=COLORS["surface2"], height=1).pack(fill="x", pady=5)
-        tk.Label(btn_area, text="— 单独操作 —", font=("微软雅黑", 9),
+        tk.Label(btn_area, text="- 单独操作 -", font=("微软雅黑", 9),
                  fg=COLORS["muted"], bg=self["bg"]).pack(pady=3)
 
         # 2行 x 3列按钮
@@ -671,7 +671,7 @@ class ResetPanel(tk.Frame):
         tk.Frame(btn_area, bg=COLORS["surface2"], height=1).pack(fill="x", pady=(8, 3))
         dns_header = tk.Frame(btn_area, bg=self["bg"])
         dns_header.pack(fill="x", pady=(0, 4))
-        tk.Label(dns_header, text="— DNS 一键切换 —", font=("微软雅黑", 9),
+        tk.Label(dns_header, text="- DNS 一键切换 -", font=("微软雅黑", 9),
                  fg=COLORS["muted"], bg=self["bg"]).pack(side="left")
         self.dns_current_label = tk.Label(dns_header, text="", font=("微软雅黑", 9),
                                           fg=COLORS["yellow"], bg=self["bg"])
@@ -764,10 +764,10 @@ class ResetPanel(tk.Frame):
 
         # 管理员检查
         if not is_admin():
-            self._log("⚠ 警告: 未以管理员身份运行，部分功能可能受限")
+            self._log("⚠ 警告: 未以管理员身份运行,部分功能可能受限")
             self._log("  → 右键选择 [以管理员身份运行] 获得完整功能")
 
-        self._log("✅ 程序已就绪，请选择操作...")
+        self._log("✅ 程序已就绪,请选择操作...")
 
         # 刷新当前 DNS 状态
         self.after(500, self._refresh_dns_status)
@@ -839,7 +839,7 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         adapter = self._get_active_adapter()
         if not adapter:
             # 修复: 使用after和默认参数
-            self.after(0, functools.partial(self._log, "⚠ 未找到活动网卡，请检查网络连接"))
+            self.after(0, functools.partial(self._log, "⚠ 未找到活动网卡,请检查网络连接"))
             self.after(0, functools.partial(self._set_running, False, ""))
             self.after(0, functools.partial(self._set_status, "⚠ 未找到活动网卡", COLORS["orange"]))
             return
@@ -886,7 +886,7 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         self.after(0, self._refresh_dns_status)
 
     def _refresh_dns_status(self):
-        """刷新当前 DNS 显示（异步，不阻塞主线程）"""
+        """刷新当前 DNS 显示(异步,不阻塞主线程)"""
         self.dns_current_label.config(text="当前: 获取中...")
 
         def _worker():
@@ -1028,14 +1028,14 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
     # ----- 一键重置 -----
     def _do_all_reset(self):
         if self._running: return
-        if not messagebox.askyesno("确认", "将执行完整网络重置：\n\n"
+        if not messagebox.askyesno("确认", "将执行完整网络重置:\n\n"
                                "1. 备份静态IP配置\n"
                                "2. 重置 Winsock\n"
                                "3. 重置 TCP/IP\n"
                                "4. 清除 DNS/ARP 缓存\n"
                                "5. 刷新 DHCP\n"
-                               "6. 恢复静态IP（如有）\n\n"
-                               "确定要继续吗？"):
+                               "6. 恢复静态IP(如有)\n\n"
+                               "确定要继续吗?"):
             return
         self._set_running(True, "一键重置全部")
         self.log_box.configure(state="normal")
@@ -1050,17 +1050,17 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         self.after(0, lambda: self.btn_restart.config(state="normal"))
 
     def _restart(self):
-        if messagebox.askyesno("确认重启", "网络重置后需要重启电脑才能生效\n\n确定要立即重启吗？"):
+        if messagebox.askyesno("确认重启", "网络重置后需要重启电脑才能生效\n\n确定要立即重启吗?"):
             subprocess.run(['powershell', '-NoProfile', '-Command', 'Restart-Computer -Force -Wait 5'])
             self._log("5秒后重启电脑...")
 
     def _quit(self):
-        if messagebox.askyesno("确认退出", "确定要退出程序吗？"):
+        if messagebox.askyesno("确认退出", "确定要退出程序吗?"):
             self.destroy()
 
 
 # ============================================================
-#  诊断面板（Tab 2）
+#  诊断面板(Tab 2)
 # ============================================================
 
 class DiagnosticPanel(tk.Frame):
@@ -1122,7 +1122,7 @@ class DiagnosticPanel(tk.Frame):
                                      fg=COLORS["muted"], bg=self["bg"], anchor="w")
         self.diag_status.pack(fill="x", padx=20)
 
-        # 结果区域（Canvas + Scrollbar）
+        # 结果区域(Canvas + Scrollbar)
         result_frame = tk.Frame(self, bg=self["bg"])
         result_frame.pack(fill="both", expand=True, padx=20, pady=8)
 
@@ -1149,10 +1149,10 @@ class DiagnosticPanel(tk.Frame):
         for w in self.results_inner.winfo_children():
             w.destroy()
         hint = tk.Label(self.results_inner,
-                        text="点击上方按钮开始诊断\n\n📡 Ping 测试：检测到目标的网络延迟和连通性\n"
-                             "🔍 DNS 解析：测试各 DNS 服务器解析是否正常\n"
-                             "🛤️ Traceroute：追踪本机到目标的网络路由路径\n"
-                             "📋 网络总览：显示当前 IP/网关/DNS 等信息",
+                        text="点击上方按钮开始诊断\n\n📡 Ping 测试:检测到目标的网络延迟和连通性\n"
+                             "🔍 DNS 解析:测试各 DNS 服务器解析是否正常\n"
+                             "🛤️ Traceroute:追踪本机到目标的网络路由路径\n"
+                             "📋 网络总览:显示当前 IP/网关/DNS 等信息",
                         font=("微软雅黑", 11), fg=COLORS["muted"], bg=COLORS["bg2"],
                         justify="left", padx=20, pady=30)
         hint.pack(fill="both", expand=True)
@@ -1243,7 +1243,7 @@ class DiagnosticPanel(tk.Frame):
         if all_ok:
             self.after(0, lambda: self._set_diag_status("✅ 所有目标 Ping 正常", COLORS["green"]))
         else:
-            self.after(0, lambda: self._set_diag_status("⚠ 部分目标连接异常，可尝试网络重置", COLORS["yellow"]))
+            self.after(0, lambda: self._set_diag_status("⚠ 部分目标连接异常,可尝试网络重置", COLORS["yellow"]))
 
     # ---- 网络总览 ----
     def _do_overview(self):
@@ -1277,7 +1277,7 @@ class DiagnosticPanel(tk.Frame):
                 if k in label_map:
                     label, _ = label_map[k]
                     self.after(0, lambda r=card, lbl=label, val=v:
-                               self._result_info(r, f"{lbl}：{val}"))
+                               self._result_info(r, f"{lbl}:{val}"))
         else:
             self.after(0, lambda r=card: self._result_fail(r, "无法获取网络信息"))
 
@@ -1405,7 +1405,7 @@ class DiagnosticPanel(tk.Frame):
         overview = results.get('overview', [])
         if overview:
             for k, v in overview:
-                self.after(0, lambda r=card0, kk=k, vv=v: self._result_info(r, f"{kk}：{vv}"))
+                self.after(0, lambda r=card0, kk=k, vv=v: self._result_info(r, f"{kk}:{vv}"))
         else:
             self.after(0, lambda r=card0: self._result_fail(r, "无法获取网络信息"))
 
@@ -1450,13 +1450,13 @@ class DiagnosticPanel(tk.Frame):
 
         if all_ping_ok and all_dns_ok:
             self.after(0, lambda r=card3:
-                       self._result_ok(r, "网络状态正常", "所有目标连通，DNS 解析正常"))
+                       self._result_ok(r, "网络状态正常", "所有目标连通,DNS 解析正常"))
         elif all_ping_ok and not all_dns_ok:
             self.after(0, lambda r=card3:
-                       self._result_fail(r, "DNS 异常", "Ping 正常但 DNS 解析失败，尝试清除 DNS 缓存"))
+                       self._result_fail(r, "DNS 异常", "Ping 正常但 DNS 解析失败,尝试清除 DNS 缓存"))
         else:
             self.after(0, lambda r=card3:
-                       self._result_fail(r, "网络连接异常", "部分目标不可达，建议使用「网络重置」标签修复"))
+                       self._result_fail(r, "网络连接异常", "部分目标不可达,建议使用「网络重置」标签修复"))
 
         self.after(0, lambda: self._set_running(False))
         self.after(0, lambda: self.diag_progress.configure(value=100))
@@ -1487,11 +1487,11 @@ class DiagnosticPanel(tk.Frame):
         overview = results.get('overview', [])
 
         # 计算评分
-        # 连通性 (40分): 5个目标，每个8分
+        # 连通性 (40分): 5个目标,每个8分
         ping_ok = sum(1 for p in ping_results if p['ok'])
         conn_score = ping_ok * 8
 
-        # DNS可用性 (30分): 3个DNS，每个10分
+        # DNS可用性 (30分): 3个DNS,每个10分
         dns_ok = sum(1 for d in dns_results if d['ok'])
         dns_score = dns_ok * 10
 
@@ -1543,7 +1543,7 @@ class DiagnosticPanel(tk.Frame):
                 tk.Label(card, text=sub, font=("微软雅黑", 8),
                          fg=COLORS["muted"], bg="#2a2a3e").pack()
 
-        # 顶部：总分 + 等级
+        # 顶部:总分 + 等级
         top = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         top.pack(fill="x", pady=4, padx=4)
         score_card = tk.Frame(top, bg="#2a2a3e")
@@ -1563,13 +1563,13 @@ class DiagnosticPanel(tk.Frame):
         tk.Label(advice_card, text="💡 健康建议", font=("微软雅黑", 10, "bold"),
                  fg=COLORS["text"], bg="#2a2a3e").pack(anchor="w", padx=10, pady=(8, 2))
         if total >= 90:
-            advice_text = "网络状态优秀，所有检测通过，继续保持。"
+            advice_text = "网络状态优秀,所有检测通过,继续保持。"
         elif total >= 70:
-            advice_text = "网络状态良好，个别指标待优化，可尝试 DNS 一键切换。"
+            advice_text = "网络状态良好,个别指标待优化,可尝试 DNS 一键切换。"
         elif total >= 50:
-            advice_text = "网络状态一般，建议执行「网络重置」修复潜在问题。"
+            advice_text = "网络状态一般,建议执行「网络重置」修复潜在问题。"
         else:
-            advice_text = "网络状态较差，建议立即执行「一键重置全部」修复网络。"
+            advice_text = "网络状态较差,建议立即执行「一键重置全部」修复网络。"
         tk.Label(advice_card, text=advice_text, font=("微软雅黑", 9),
                  fg=COLORS["subtext"], bg="#2a2a3e", wraplength=200,
                  justify="left", anchor="w").pack(anchor="w", padx=10, pady=(0, 8))
@@ -1592,7 +1592,7 @@ class DiagnosticPanel(tk.Frame):
         rc(row2, "📉", "平均丢包", f"{avg_loss}%", "5个目标平均",
            COLORS["green"] if avg_loss == 0 else COLORS["yellow"] if avg_loss < 20 else COLORS["red"])
         # DNS服务器
-        dns_svr = next((v for k, v in overview if 'DNS' in k), "—")
+        dns_svr = next((v for k, v in overview if 'DNS' in k), "-")
         rc(row2, "🌐", "当前DNS", dns_svr[:20] if len(dns_svr) > 20 else dns_svr, "当前使用")
 
         self.after(0, lambda: self._set_running(False))
@@ -1622,7 +1622,7 @@ class App(tk.Tk):
         self.minsize(720, 580)
         self.configure(bg=COLORS["bg"])
 
-        # 先让窗口显示出来，再做后续初始化
+        # 先让窗口显示出来,再做后续初始化
         self.update_idletasks()
 
         # ===== 母亲节问候 =====
@@ -1630,13 +1630,13 @@ class App(tk.Tk):
             import datetime
             today = datetime.datetime.now()
             mother_day_msg = (
-                "🌷 母亲节快乐！🌷\n\n"
-                "祝天下所有妈妈：\n"
-                "健康平安，笑口常开！\n\n"
+                "🌷 母亲节快乐!🌷\n\n"
+                "祝天下所有妈妈:\n"
+                "健康平安,笑口常开!\n\n"
                 "❤️ 感谢您一直以来的付出 ❤️\n\n"
-                "—— 您的网络工具箱 v3.1"
+                "-- 您的网络工具箱 v3.1"
             )
-            # 母亲节是每年5月第二个周日，2026年是5月10日
+            # 母亲节是每年5月第二个周日,2026年是5月10日
             if today.month == 5 and today.day in [9, 10]:
                 messagebox.showinfo("🌸 母亲节快乐 🌸", mother_day_msg)
         except Exception:
@@ -1651,7 +1651,7 @@ class App(tk.Tk):
         tk.Label(topbar, text="🛠️  网络工具箱",
                  font=("微软雅黑", 14, "bold"), fg=COLORS["text"],
                  bg=COLORS["surface"]).pack(side="left")
-        tk.Label(topbar, text="v3.1  ·  重置 + 诊断  ·  🌸 母亲节快乐！",
+        tk.Label(topbar, text="v3.1  ·  重置 + 诊断  ·  🌸 母亲节快乐!",
                  font=("微软雅黑", 9), fg=COLORS["pink"],
                  bg=COLORS["surface"]).pack(side="left", padx=10)
 
@@ -1726,7 +1726,7 @@ if __name__ == "__main__":
         root_temp = tk_temp.Tk()
         root_temp.withdraw()
         root_temp.attributes("-topmost", True)
-        mb_temp.showwarning("提示", "程序已在运行！\n请先关闭旧窗口。", parent=root_temp)
+        mb_temp.showwarning("提示", "程序已在运行!\n请先关闭旧窗口。", parent=root_temp)
         root_temp.destroy()
         sys.exit(1)
 
@@ -1742,7 +1742,7 @@ if __name__ == "__main__":
         with open(log_path, 'w', encoding='utf-8') as f:
             f.write(f"Crash at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             f.write(error_msg)
-        # 如果是打包环境，显示错误弹窗
+        # 如果是打包环境,显示错误弹窗
         try:
             import tkinter as tk_err
             from tkinter import messagebox as mb_err
