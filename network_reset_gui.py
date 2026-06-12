@@ -9,6 +9,11 @@ Windows 网络重置工具 - GUI 版本 v3.1
   4. 网络诊断卡死 - 增加超时和异常处理
   5. DNS lookup bug - 跳过DNS服务器自身IP取真实结果
   6. 母亲节特别版 - 温馨问候语
+  7. Windows 7 (32/64-bit) 兼容性支持
+     - Get-NetAdapter/WMI 双通道自动切换
+     - Resolve-DnsName → nslookup 回退
+     - Test-NetConnection → tracert.exe 回退
+     - 字体自动检测回退
 """
 
 import os
@@ -56,6 +61,16 @@ def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
     except:
+        return False
+
+
+def _is_win7_or_older():
+    """检测是否 Windows 7 或更早版本（Get-NetAdapter/Resolve-DnsName 等命令不可用）"""
+    try:
+        ver = sys.getwindowsversion()
+        # Win7 = 6.1, Vista = 6.0, Win2k8 = 6.0, XP = 5.1
+        return ver.major <= 5 or (ver.major == 6 and ver.minor <= 1)
+    except Exception:
         return False
 
 
@@ -414,14 +429,11 @@ class NetworkDiagnostic:
         except Exception as e:
             return ""
 
-    def get_overview(self):
-        """获取网络状态总览"""
+    def _get_overview_modern(self):
+        """使用 Get-NetAdapter（Win8+）"""
         results = []
         ps = '''
 $out = @()
-
-# 适配器信息
-$adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object Name, InterfaceDescription, MacAddress, LinkSpeed
 $active = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
 if ($active) {
     $cfg = Get-NetIPConfiguration -InterfaceIndex $active.ifIndex -ErrorAction SilentlyContinue
@@ -446,13 +458,75 @@ Write-Output ($out -join "`n")
                 results.append((k, v))
         return results
 
+    def _get_overview_legacy(self):
+        """使用 WMI + netsh 查询（Win7 兼容）"""
+        results = []
+        ps_wmi = '''
+$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -eq $true }
+if ($adapters) {
+    $a = $adapters | Select-Object -First 1
+    $nic = Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.GUID -eq $a.SettingID } | Select-Object -First 1
+    $name = if ($nic) { $nic.NetConnectionID } else { "未知" }
+    $desc = if ($nic) { $nic.Description } else { "" }
+    $mac = if ($nic) { $nic.MacAddress } else { "" }
+    $speed = if ($nic) { [math]::Round($nic.Speed / 1000000) } else { 0 }
+    $ip = ($a.IPAddress | Where-Object { $_ -match '\\\\.' }) -join ','
+    $gw = ($a.DefaultIPGateway -join ',')
+    $dns = ($a.DNSServerSearchOrder -join ', ')
+    $dhcp = if ($a.DHCPEnabled) { "已启用" } else { "手动" }
+    Write-Output "状态|up"
+    Write-Output "接口|$name"
+    Write-Output "描述|$desc"
+    Write-Output "MAC|$mac"
+    Write-Output "速度|${speed} Mbps"
+    if ($ip) { Write-Output "IPv4|$ip" }
+    if ($gw) { Write-Output "网关|$gw" }
+    if ($dns) { Write-Output "DNS|$dns" }
+    Write-Output "DHCP|$dhcp"
+}
+'''
+        output = self._run_ps(ps_wmi, timeout=10)
+        lines = [l for l in output.split('\n') if l.strip() and '|' in l]
+        for line in lines:
+            parts = line.split('|', 1)
+            if len(parts) == 2:
+                k, v = parts[0].strip(), parts[1].strip()
+                results.append((k, v))
+        if not results:
+            # 最后备选：ipconfig
+            try:
+                raw = subprocess.run('ipconfig', shell=True, capture_output=True, timeout=5).stdout
+                try:
+                    output = raw.decode('gbk')
+                except Exception:
+                    output = raw.decode('utf-8', errors='replace')
+                # 简单提取 IPv4 和默认网关
+                for m in re.finditer(r'IPv4[^:]*:\s*(\S+)', output):
+                    results.append(('IPv4', m.group(1)))
+                for m in re.finditer(r'默认网关[^:]*:\s*(\S+)', output):
+                    results.append(('网关', m.group(1)))
+            except Exception:
+                pass
+        return results
+
+    def get_overview(self):
+        """自动选择 Win7/Win8+ 命令获取网络状态总览"""
+        if _is_win7_or_older():
+            return self._get_overview_legacy()
+        results = self._get_overview_modern()
+        if not results:
+            results = self._get_overview_legacy()
+        return results
+
     @staticmethod
     def _decode_output(raw_bytes):
-        """解码 subprocess 输出,中文 Windows 先尝试 GBK 再回退 UTF-8"""
-        try:
-            return raw_bytes.decode('gbk')
-        except (UnicodeDecodeError, LookupError):
-            return raw_bytes.decode('utf-8', errors='replace')
+        """解码 subprocess 输出,中文 Windows 优先 GBK,尝试 UTF-16LE(Win7 PowerShell 默认输出编码)"""
+        for enc in ('gbk', 'utf-16-le', 'utf-8'):
+            try:
+                return raw_bytes.decode(enc)
+            except (UnicodeDecodeError, LookupError):
+                continue
+        return raw_bytes.decode('utf-8', errors='replace')
 
     def ping(self, target, count=4):
         """Ping 一个目标,使用 cmd /c ping,返回 (ok, avg_ms, loss_pct, output)"""
@@ -489,7 +563,41 @@ Write-Output ($out -join "`n")
             return False, None, 100, str(e)
 
     def dns_lookup(self, target, dns_server=None):
-        """DNS 解析测试 - 使用 PowerShell Resolve-DnsName"""
+        """DNS 解析测试 - PowerShell Resolve-DnsName（Win7 备选 nslookup）"""
+        # Win7 没有 Resolve-DnsName，使用 nslookup
+        use_nslookup = sys.getwindowsversion().major <= 5 or (
+            sys.getwindowsversion().major == 6 and sys.getwindowsversion().minor <= 1
+        ) if hasattr(sys, 'getwindowsversion') else False
+
+        if use_nslookup:
+            try:
+                if dns_server:
+                    cmd_line = f'nslookup {target} {dns_server}'
+                else:
+                    cmd_line = f'nslookup {target}'
+                raw = subprocess.run(
+                    ['cmd', '/c', cmd_line],
+                    shell=True, capture_output=True, timeout=10
+                )
+                try:
+                    output = raw.stdout.decode('gbk')
+                except Exception:
+                    output = raw.stdout.decode('utf-8', errors='replace')
+                # nslookup 成功输出包含 "Name:" 和 "Address:"
+                ip_addrs = re.findall(r'Address(?:es)?:\s+(\S+)', output)
+                ip = None
+                for addr in ip_addrs:
+                    if re.match(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', addr):
+                        ip = addr
+                        break
+                name_resolved = (ip is not None and '找不到' not in output
+                                 and "can't find" not in output.lower()
+                                 and 'Non-existent domain' not in output)
+                return name_resolved, ip, output.strip()
+            except Exception as e:
+                return False, None, str(e)
+
+        # Win8+ 使用 Resolve-DnsName
         try:
             if dns_server:
                 ps_script = f'Resolve-DnsName {target} -DnsOnly -Server {dns_server} -ErrorAction Stop | Select-Object IPAddress,NameHost | Format-List'
@@ -508,19 +616,81 @@ Write-Output ($out -join "`n")
                              and '找不到' not in output)
             return name_resolved, ip, output
         except Exception as e:
-            return False, None, str(e)
+            # 回退到 nslookup
+            try:
+                cmd_line = f'nslookup {target}'
+                if dns_server:
+                    cmd_line = f'nslookup {target} {dns_server}'
+                raw = subprocess.run(
+                    ['cmd', '/c', cmd_line],
+                    shell=True, capture_output=True, timeout=10
+                )
+                try:
+                    output = raw.stdout.decode('gbk')
+                except Exception:
+                    output = raw.stdout.decode('utf-8', errors='replace')
+                ip_addrs = re.findall(r'Address(?:es)?:\s+(\S+)', output)
+                ip = None
+                for addr in ip_addrs:
+                    if re.match(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', addr):
+                        ip = addr
+                        break
+                name_resolved = (ip is not None and '找不到' not in output
+                                 and "can't find" not in output.lower())
+                return name_resolved, ip, output.strip()
+            except Exception as e2:
+                return False, None, str(e2)
 
     def traceroute(self, target):
-        """Tracert 路由追踪 - 使用 PowerShell"""
+        """Tracert 路由追踪 - 优先 PowerShell，Win7 回退到 tracert.exe"""
+        # Win7 没有 Test-NetConnection，使用 tracert.exe
+        use_tracert = sys.getwindowsversion().major <= 5 or (
+            sys.getwindowsversion().major == 6 and sys.getwindowsversion().minor <= 1
+        ) if hasattr(sys, 'getwindowsversion') else False
+
+        if use_tracert:
+            try:
+                raw = subprocess.run(
+                    ['cmd', '/c', f'tracert -h 30 {target}'],
+                    shell=True, capture_output=True, timeout=60
+                )
+                try:
+                    output = raw.stdout.decode('gbk')
+                except Exception:
+                    output = raw.stdout.decode('utf-8', errors='replace')
+                if not output.strip():
+                    try:
+                        output = raw.stderr.decode('gbk')
+                    except Exception:
+                        output = raw.stderr.decode('utf-8', errors='replace')
+                return output.strip()
+            except Exception as e:
+                return f"追踪失败: {e}"
+
         try:
             ps_script = f'Test-NetConnection -ComputerName {target} -TraceRoute -WarningAction SilentlyContinue | Select-Object RemoteAddress,RemotePort,TcpTestSucceeded,TraceRoute | Format-List'
             result = subprocess.run(
                 ['powershell', '-NoProfile', '-Command', ps_script],
                 capture_output=True, timeout=60
             )
-            return self._decode_output(result.stdout)
+            output = self._decode_output(result.stdout)
+            if '找不到' in output or output.strip() == '':
+                raise Exception("Resolve-DnsName not available")
+            return output
         except Exception:
-            return "追踪失败"
+            # 回退到 tracert.exe
+            try:
+                raw = subprocess.run(
+                    ['cmd', '/c', f'tracert -h 30 {target}'],
+                    shell=True, capture_output=True, timeout=60
+                )
+                try:
+                    output = raw.stdout.decode('gbk')
+                except Exception:
+                    output = raw.stdout.decode('utf-8', errors='replace')
+                return output.strip()
+            except Exception as e:
+                return f"追踪失败: {e}"
 
     def run_full_diagnostic(self, progress_callback=None):
         """运行完整诊断,返回结果字典"""
@@ -607,7 +777,7 @@ def make_btn_style():
 def styled_btn(parent, text, cmd, bg, fg=None, font_size=10, bold=False, **kw):
     if fg is None:
         fg = COLORS["bg"]
-    font_name = "微软雅黑"
+    font_name = FONT_FAMILY
     font_weight = "bold" if bold else "normal"
     return tk.Button(parent, text=text, font=(font_name, font_size, font_weight),
                      bg=bg, fg=fg, activebackground=bg, activeforeground=fg,
@@ -631,10 +801,10 @@ class ResetPanel(tk.Frame):
         # 标题
         header = tk.Frame(self, bg=COLORS["surface"], pady=12)
         header.pack(fill="x")
-        tk.Label(header, text="🌐 Windows 网络重置工具", font=("微软雅黑", 16, "bold"),
+        tk.Label(header, text="🌐 Windows 网络重置工具", font=(FONT_FAMILY, 16, "bold"),
                  fg=COLORS["text"], bg=COLORS["surface"]).pack()
         tk.Label(header, text="重置网络配置 · 修复网络问题 · 保留静态IP",
-                 font=("微软雅黑", 9), fg=COLORS["muted"], bg=COLORS["surface"]).pack()
+                 font=(FONT_FAMILY, 9), fg=COLORS["muted"], bg=COLORS["surface"]).pack()
 
         # 按钮区
         btn_area = tk.Frame(self, bg=self["bg"], pady=12)
@@ -647,7 +817,7 @@ class ResetPanel(tk.Frame):
         self.btn_all.pack(fill="x", pady=(0, 10))
 
         tk.Frame(btn_area, bg=COLORS["surface2"], height=1).pack(fill="x", pady=5)
-        tk.Label(btn_area, text="- 单独操作 -", font=("微软雅黑", 9),
+        tk.Label(btn_area, text="- 单独操作 -", font=(FONT_FAMILY, 9),
                  fg=COLORS["muted"], bg=self["bg"]).pack(pady=3)
 
         # 2行 x 3列按钮
@@ -671,9 +841,9 @@ class ResetPanel(tk.Frame):
         tk.Frame(btn_area, bg=COLORS["surface2"], height=1).pack(fill="x", pady=(8, 3))
         dns_header = tk.Frame(btn_area, bg=self["bg"])
         dns_header.pack(fill="x", pady=(0, 4))
-        tk.Label(dns_header, text="- DNS 一键切换 -", font=("微软雅黑", 9),
+        tk.Label(dns_header, text="- DNS 一键切换 -", font=(FONT_FAMILY, 9),
                  fg=COLORS["muted"], bg=self["bg"]).pack(side="left")
-        self.dns_current_label = tk.Label(dns_header, text="", font=("微软雅黑", 9),
+        self.dns_current_label = tk.Label(dns_header, text="", font=(FONT_FAMILY, 9),
                                           fg=COLORS["yellow"], bg=self["bg"])
         self.dns_current_label.pack(side="right")
 
@@ -690,17 +860,17 @@ class ResetPanel(tk.Frame):
         # 自定义 DNS 输入行
         dns_custom_row = tk.Frame(btn_area, bg=self["bg"])
         dns_custom_row.pack(fill="x", pady=(2, 0))
-        tk.Label(dns_custom_row, text="自定义:", font=("微软雅黑", 9),
+        tk.Label(dns_custom_row, text="自定义:", font=(FONT_FAMILY, 9),
                  fg=COLORS["subtext"], bg=self["bg"]).pack(side="left", padx=(3, 4))
-        self.dns_primary_entry = tk.Entry(dns_custom_row, font=("Consolas", 9),
+        self.dns_primary_entry = tk.Entry(dns_custom_row, font=(FONT_MONO, 9),
                                            bg=COLORS["surface"], fg=COLORS["text"],
                                            insertbackground=COLORS["text"],
                                            relief="flat", bd=0, width=14)
         self.dns_primary_entry.pack(side="left", padx=2)
         self.dns_primary_entry.insert(0, "")
-        tk.Label(dns_custom_row, text="备用:", font=("微软雅黑", 9),
+        tk.Label(dns_custom_row, text="备用:", font=(FONT_FAMILY, 9),
                  fg=COLORS["subtext"], bg=self["bg"]).pack(side="left", padx=(6, 4))
-        self.dns_secondary_entry = tk.Entry(dns_custom_row, font=("Consolas", 9),
+        self.dns_secondary_entry = tk.Entry(dns_custom_row, font=(FONT_MONO, 9),
                                             bg=COLORS["surface"], fg=COLORS["text"],
                                             insertbackground=COLORS["text"],
                                             relief="flat", bd=0, width=14)
@@ -709,7 +879,7 @@ class ResetPanel(tk.Frame):
                    COLORS["green"], font_size=9).pack(side="left", padx=6)
 
         # 状态 + 进度
-        self.status_label = tk.Label(self, text="就绪", font=("微软雅黑", 10),
+        self.status_label = tk.Label(self, text="就绪", font=(FONT_FAMILY, 10),
                                       fg=COLORS["green"], bg=self["bg"], anchor="w")
         self.status_label.pack(fill="x", padx=20, pady=(5, 0))
 
@@ -723,9 +893,9 @@ class ResetPanel(tk.Frame):
 
         log_header = tk.Frame(log_frame, bg=self["bg"])
         log_header.pack(fill="x")
-        tk.Label(log_header, text="📋 执行日志", font=("微软雅黑", 10, "bold"),
+        tk.Label(log_header, text="📋 执行日志", font=(FONT_FAMILY, 10, "bold"),
                  fg=COLORS["text"], bg=self["bg"]).pack(side="left")
-        tk.Button(log_header, text="清空", font=("微软雅黑", 9),
+        tk.Button(log_header, text="清空", font=(FONT_FAMILY, 9),
                   bg=COLORS["surface2"], fg=COLORS["text"], relief="flat",
                   command=self._clear_log, cursor="hand2").pack(side="right")
 
@@ -734,7 +904,7 @@ class ResetPanel(tk.Frame):
 
         scrollbar = tk.Scrollbar(log_container)
         scrollbar.pack(side="right", fill="y")
-        self.log_box = tk.Text(log_container, font=("Consolas", 10),
+        self.log_box = tk.Text(log_container, font=(FONT_MONO, 10),
                                bg=COLORS["bg2"], fg=COLORS["text"],
                                insertbackground=COLORS["text"], relief="flat", bd=0,
                                state="disabled", yscrollcommand=scrollbar.set)
@@ -745,7 +915,7 @@ class ResetPanel(tk.Frame):
         bottom = tk.Frame(self, bg=self["bg"], pady=10)
         bottom.pack(fill="x", padx=20)
 
-        self.hint_label = tk.Label(bottom, text="", font=("微软雅黑", 9),
+        self.hint_label = tk.Label(bottom, text="", font=(FONT_FAMILY, 9),
                                     fg=COLORS["muted"], bg=self["bg"], anchor="w")
         self.hint_label.pack(side="left")
 
@@ -776,23 +946,39 @@ class ResetPanel(tk.Frame):
         return styled_btn(parent, text, cmd, color, font_size=10, bold=True)
 
     def _get_active_adapter(self):
-        """获取活动网卡名称 - 修复v2.3的bug"""
-        try:
-            # 方法1: 使用 Get-NetAdapter (Windows 8/Server 2012+)
-            ps1 = '''
+        """获取活动网卡名称 - Win7 兼容（自动选择 WMI/NetAdapter）"""
+        # Win7: 先试 WMI（更可靠）
+        if _is_win7_or_older():
+            try:
+                ps_wmi = '''
+$adapter = Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.NetConnectionStatus -eq 2 -and $_.NetEnabled -eq $true } | Select-Object -First 1
+if ($adapter) { Write-Output $adapter.NetConnectionID }
+'''
+                result = subprocess.run(['powershell', '-NoProfile', '-Command', ps_wmi],
+                                       capture_output=True, timeout=5)
+                name = self._decode_output(result.stdout).strip()
+                if name:
+                    self._log(f"  ✓ 检测到网卡(WMI): {name}")
+                    return name
+            except Exception:
+                pass
+        else:
+            # Win8+: 先试 Get-NetAdapter
+            try:
+                ps1 = '''
 $adapter = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
 if ($adapter) { Write-Output $adapter.NetConnectionID }
 '''
-            result = subprocess.run(['powershell', '-NoProfile', '-Command', ps1],
-                                   capture_output=True, timeout=5)
-            name = self._decode_output(result.stdout).strip()
-            if name:
-                return name
-        except Exception as e:
-            self._log(f"Get-NetAdapter 失败: {e}")
+                result = subprocess.run(['powershell', '-NoProfile', '-Command', ps1],
+                                       capture_output=True, timeout=5)
+                name = self._decode_output(result.stdout).strip()
+                if name:
+                    return name
+            except Exception as e:
+                self._log(f"Get-NetAdapter 失败: {e}")
 
+        # 通用备选: WMI (Win7/Win8+ 均可)
         try:
-            # 方法2: 使用 WMI (兼容性更好)
             ps2 = '''
 $adapter = Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.NetConnectionStatus -eq 2 } | Select-Object -First 1
 if ($adapter) { Write-Output $adapter.NetConnectionID }
@@ -805,22 +991,29 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
         except Exception as e:
             self._log(f"WMI 查询失败: {e}")
 
-        # 方法3: 使用 ipconfig 解析
+        # ipconfig 解析
         try:
             result = subprocess.run(['ipconfig'], capture_output=True, timeout=5)
             output = self._decode_output(result.stdout)
-            # 查找有 IPv4 地址的适配器
+            # 查找 "适配器 xxx:" 段落后有 IPv4 地址
+            in_adapter = False
             for line in output.split('\n'):
-                if 'IPv4' in line or '适配器' in line:
-                    # 提取适配器名称
-                    pass
+                if '适配器' in line or 'adapter' in line.lower():
+                    in_adapter = True
+                    m = re.match(r'.*(?:适配器|adapter)\s+(.+?):', line)
+                    current_name = m.group(1).strip() if m else None
+                elif in_adapter and 'IPv4' in line:
+                    if current_name:
+                        self._log(f"  ✓ 检测到网卡(ipconfig): {current_name}")
+                        return current_name
         except Exception:
             pass
 
+        self._log("  ⚠ 未找到活动网卡")
         return None
 
     def _make_dns_btn(self, parent, name, cfg):
-        btn = tk.Button(parent, text=name, font=("微软雅黑", 9, "bold"),
+        btn = tk.Button(parent, text=name, font=(FONT_FAMILY, 9, "bold"),
                         bg=cfg['color'], fg=COLORS["bg"],
                         activebackground=cfg['color'], activeforeground=COLORS["bg"],
                         relief="flat", cursor="hand2", padx=5, pady=4,
@@ -1051,8 +1244,12 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
 
     def _restart(self):
         if messagebox.askyesno("确认重启", "网络重置后需要重启电脑才能生效\n\n确定要立即重启吗?"):
-            subprocess.run(['powershell', '-NoProfile', '-Command', 'Restart-Computer -Force -Wait 5'])
-            self._log("5秒后重启电脑...")
+            # 使用 shutdown.exe 替代 Restart-Computer（Win7 兼容）
+            try:
+                subprocess.run(['shutdown', '/r', '/f', '/t', '5', '/c', '网络重置后系统将重启'])
+                self._log("5秒后重启电脑...")
+            except Exception as e:
+                self._log(f"重启失败: {e}")
 
     def _quit(self):
         if messagebox.askyesno("确认退出", "确定要退出程序吗?"):
@@ -1076,10 +1273,10 @@ class DiagnosticPanel(tk.Frame):
         # 标题
         header = tk.Frame(self, bg=COLORS["surface"], pady=12)
         header.pack(fill="x")
-        tk.Label(header, text="🔍 网络诊断工具", font=("微软雅黑", 16, "bold"),
+        tk.Label(header, text="🔍 网络诊断工具", font=(FONT_FAMILY, 16, "bold"),
                  fg=COLORS["text"], bg=COLORS["surface"]).pack()
         tk.Label(header, text="一键检测网络状态 · Ping / DNS / 路由追踪",
-                 font=("微软雅黑", 9), fg=COLORS["muted"], bg=COLORS["surface"]).pack()
+                 font=(FONT_FAMILY, 9), fg=COLORS["muted"], bg=COLORS["surface"]).pack()
 
         # 按钮行
         ctrl = tk.Frame(self, bg=self["bg"], pady=10, padx=20)
@@ -1107,7 +1304,7 @@ class DiagnosticPanel(tk.Frame):
 
         # 自定义 Ping 输入
         self.custom_target = tk.StringVar(value="www.baidu.com")
-        tk.Entry(ctrl, textvariable=self.custom_target, font=("Consolas", 10),
+        tk.Entry(ctrl, textvariable=self.custom_target, font=(FONT_MONO, 10),
                  bg=COLORS["surface"], fg=COLORS["text"], insertbackground=COLORS["text"],
                  relief="flat", bd=0, width=18).pack(side="left", padx=(10, 4))
         self.btn_custom_ping = styled_btn(ctrl, "Ping", self._do_custom_ping, COLORS["orange"], font_size=11)
@@ -1118,7 +1315,7 @@ class DiagnosticPanel(tk.Frame):
                                               style="diag.Horizontal.TProgressbar")
         self.diag_progress.pack(fill="x", padx=20, pady=(0, 5))
 
-        self.diag_status = tk.Label(self, text="就绪", font=("微软雅黑", 9),
+        self.diag_status = tk.Label(self, text="就绪", font=(FONT_FAMILY, 9),
                                      fg=COLORS["muted"], bg=self["bg"], anchor="w")
         self.diag_status.pack(fill="x", padx=20)
 
@@ -1153,7 +1350,7 @@ class DiagnosticPanel(tk.Frame):
                              "🔍 DNS 解析:测试各 DNS 服务器解析是否正常\n"
                              "🛤️ Traceroute:追踪本机到目标的网络路由路径\n"
                              "📋 网络总览:显示当前 IP/网关/DNS 等信息",
-                        font=("微软雅黑", 11), fg=COLORS["muted"], bg=COLORS["bg2"],
+                        font=(FONT_FAMILY, 11), fg=COLORS["muted"], bg=COLORS["bg2"],
                         justify="left", padx=20, pady=30)
         hint.pack(fill="both", expand=True)
 
@@ -1181,30 +1378,30 @@ class DiagnosticPanel(tk.Frame):
     def _card(self, parent, title, bg=COLORS["surface"]):
         f = tk.Frame(parent, bg=bg, padx=12, pady=8)
         f.pack(fill="x", pady=2)
-        tk.Label(f, text=title, font=("微软雅黑", 10, "bold"),
+        tk.Label(f, text=title, font=(FONT_FAMILY, 10, "bold"),
                  fg=COLORS["text"], bg=bg).pack(anchor="w")
         return f
 
     def _result_ok(self, parent, text, sub=""):
         color = COLORS["green"]
         icon = "✅"
-        tk.Label(parent, text=f"  {icon} {text}", font=("微软雅黑", 10),
+        tk.Label(parent, text=f"  {icon} {text}", font=(FONT_FAMILY, 10),
                  fg=color, bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
         if sub:
-            tk.Label(parent, text=f"      {sub}", font=("微软雅黑", 9),
+            tk.Label(parent, text=f"      {sub}", font=(FONT_FAMILY, 9),
                      fg=COLORS["subtext"], bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
 
     def _result_fail(self, parent, text, sub=""):
         color = COLORS["red"]
         icon = "❌"
-        tk.Label(parent, text=f"  {icon} {text}", font=("微软雅黑", 10),
+        tk.Label(parent, text=f"  {icon} {text}", font=(FONT_FAMILY, 10),
                  fg=color, bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
         if sub:
-            tk.Label(parent, text=f"      {sub}", font=("微软雅黑", 9),
+            tk.Label(parent, text=f"      {sub}", font=(FONT_FAMILY, 9),
                      fg=COLORS["subtext"], bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
 
     def _result_info(self, parent, text):
-        tk.Label(parent, text=f"  {text}", font=("微软雅黑", 9),
+        tk.Label(parent, text=f"  {text}", font=(FONT_FAMILY, 9),
                  fg=COLORS["subtext"], bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
 
     # ---- 快速 Ping ----
@@ -1305,7 +1502,7 @@ class DiagnosticPanel(tk.Frame):
         row.pack(fill="both", expand=True, pady=4, padx=4)
         card = self._card(row, f"🛤️ 路由追踪: {target}")
 
-        text_widget = tk.Text(card, font=("Consolas", 9), bg=COLORS["bg2"],
+        text_widget = tk.Text(card, font=(FONT_MONO, 9), bg=COLORS["bg2"],
                                fg=COLORS["subtext"], relief="flat", bd=0,
                                height=min(20, max(10, len(output.split('\n')))))
         text_widget.pack(fill="x", padx=8, pady=4)
@@ -1318,7 +1515,7 @@ class DiagnosticPanel(tk.Frame):
             self.clipboard_append(output)
             self._set_diag_status("✅ 路由追踪结果已复制", COLORS["green"])
 
-        btn_copy = tk.Button(card, text="📋 复制结果", font=("微软雅黑", 9),
+        btn_copy = tk.Button(card, text="📋 复制结果", font=(FONT_FAMILY, 9),
                               bg=COLORS["surface"], fg=COLORS["text"],
                               relief="flat", cursor="hand2", command=copy_trace)
         btn_copy.pack(anchor="e", padx=10, pady=4)
@@ -1358,7 +1555,7 @@ class DiagnosticPanel(tk.Frame):
                        self._result_fail(r, f"连接失败", f"丢包率 {l}%"))
 
         # 原始输出
-        raw = tk.Text(card, font=("Consolas", 9), bg=COLORS["bg2"],
+        raw = tk.Text(card, font=(FONT_MONO, 9), bg=COLORS["bg2"],
                       fg=COLORS["subtext"], relief="flat", bd=0,
                       height=min(12, max(5, len(output.split('\n')))))
         raw.pack(fill="x", padx=8, pady=4)
@@ -1536,11 +1733,11 @@ class DiagnosticPanel(tk.Frame):
                     vc = COLORS["green"] if num >= 80 else COLORS["yellow"] if num >= 50 else COLORS["red"]
                 except (ValueError, TypeError):
                     vc = COLORS["subtext"]
-            lbl = tk.Label(card, text=value, font=("微软雅黑", 16, "bold"),
+            lbl = tk.Label(card, text=value, font=(FONT_FAMILY, 16, "bold"),
                            fg=vc, bg="#2a2a3e")
             lbl.pack(pady=(4, 0))
             if sub:
-                tk.Label(card, text=sub, font=("微软雅黑", 8),
+                tk.Label(card, text=sub, font=(FONT_FAMILY, 8),
                          fg=COLORS["muted"], bg="#2a2a3e").pack()
 
         # 顶部:总分 + 等级
@@ -1548,19 +1745,19 @@ class DiagnosticPanel(tk.Frame):
         top.pack(fill="x", pady=4, padx=4)
         score_card = tk.Frame(top, bg="#2a2a3e")
         score_card.pack(side="left", fill="both", expand=True, padx=(0, 4))
-        tk.Label(score_card, text="网络健康评分", font=("微软雅黑", 10),
+        tk.Label(score_card, text="网络健康评分", font=(FONT_FAMILY, 10),
                  fg=COLORS["text"], bg="#2a2a3e").pack(pady=(8, 0))
         score_num = tk.Label(score_card, text=f"{total}",
-                             font=("微软雅黑", 36, "bold"),
+                             font=(FONT_FAMILY, 36, "bold"),
                              fg=grade_color, bg="#2a2a3e")
         score_num.pack()
-        tk.Label(score_card, text=f"{grade}", font=("微软雅黑", 11, "bold"),
+        tk.Label(score_card, text=f"{grade}", font=(FONT_FAMILY, 11, "bold"),
                  fg=grade_color, bg="#2a2a3e").pack(pady=(0, 8))
 
         # 等级说明
         advice_card = tk.Frame(top, bg="#2a2a3e")
         advice_card.pack(side="right", fill="both", expand=True, padx=(4, 0))
-        tk.Label(advice_card, text="💡 健康建议", font=("微软雅黑", 10, "bold"),
+        tk.Label(advice_card, text="💡 健康建议", font=(FONT_FAMILY, 10, "bold"),
                  fg=COLORS["text"], bg="#2a2a3e").pack(anchor="w", padx=10, pady=(8, 2))
         if total >= 90:
             advice_text = "网络状态优秀,所有检测通过,继续保持。"
@@ -1570,7 +1767,7 @@ class DiagnosticPanel(tk.Frame):
             advice_text = "网络状态一般,建议执行「网络重置」修复潜在问题。"
         else:
             advice_text = "网络状态较差,建议立即执行「一键重置全部」修复网络。"
-        tk.Label(advice_card, text=advice_text, font=("微软雅黑", 9),
+        tk.Label(advice_card, text=advice_text, font=(FONT_FAMILY, 9),
                  fg=COLORS["subtext"], bg="#2a2a3e", wraplength=200,
                  justify="left", anchor="w").pack(anchor="w", padx=10, pady=(0, 8))
 
@@ -1609,6 +1806,9 @@ class DiagnosticPanel(tk.Frame):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+
+        # 检测系统字体（Win7 兼容）
+        _init_font()
 
         # 关闭 PyInstaller 启动画面
         try:
@@ -1649,10 +1849,10 @@ class App(tk.Tk):
         topbar = tk.Frame(self, bg=COLORS["surface"], pady=8, padx=15)
         topbar.pack(fill="x")
         tk.Label(topbar, text="🛠️  网络工具箱",
-                 font=("微软雅黑", 14, "bold"), fg=COLORS["text"],
+                 font=(FONT_FAMILY, 14, "bold"), fg=COLORS["text"],
                  bg=COLORS["surface"]).pack(side="left")
         tk.Label(topbar, text="v3.1  ·  重置 + 诊断  ·  🌸 母亲节快乐!",
-                 font=("微软雅黑", 9), fg=COLORS["pink"],
+                 font=(FONT_FAMILY, 9), fg=COLORS["pink"],
                  bg=COLORS["surface"]).pack(side="left", padx=10)
 
         # Tab 控制
@@ -1669,7 +1869,7 @@ class App(tk.Tk):
         self._active_tab = "reset"
         for tid, label in tabs:
             btn = tk.Button(tab_btn_frame, text=label,
-                            font=("微软雅黑", 10, "bold"),
+                            font=(FONT_FAMILY, 10, "bold"),
                             bg=COLORS["surface2"], fg=COLORS["muted"],
                             relief="flat", cursor="hand2", padx=15, pady=6,
                             command=lambda t=tid: self._switch_tab(t))
@@ -1698,7 +1898,7 @@ class App(tk.Tk):
         footer = tk.Frame(self, bg=COLORS["surface"], pady=4)
         footer.pack(fill="x")
         tk.Label(footer, text="Network Reset Tool v3.1  ·  michaelqiu  ·  🌷 5月10日 母亲节",
-                 font=("微软雅黑", 8), fg=COLORS["muted"], bg=COLORS["surface"]).pack(side="right", padx=10)
+                 font=(FONT_FAMILY, 8), fg=COLORS["muted"], bg=COLORS["surface"]).pack(side="right", padx=10)
 
     def _switch_tab(self, tid):
         if tid == self._active_tab:
@@ -1716,6 +1916,40 @@ class App(tk.Tk):
             self.diag_panel.pack(fill="both", expand=True)
 
         self._active_tab = tid
+
+
+# 启动时自动检测系统可用字体（Win7 兼容）
+FONT_FAMILY = None  # will be set after Tk root init
+FONT_MONO = "Consolas"
+
+
+def _init_font():
+    """在 Tk 根窗口创建后调用，检测系统字体"""
+    global FONT_FAMILY, FONT_MONO
+    import tkinter.font as tkfont
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        available = list(tkfont.families(root))
+        root.destroy()
+    except Exception:
+        available = []
+    if not available:
+        FONT_FAMILY = "Tahoma"
+        return
+    # 中文字体优选
+    for name in ["微软雅黑", "Microsoft YaHei UI", "Microsoft YaHei",
+                 "Segoe UI", "Tahoma", "Microsoft Sans Serif", "Arial"]:
+        if name in available:
+            FONT_FAMILY = name
+            break
+    else:
+        FONT_FAMILY = "Tahoma"
+    # 等宽字体
+    for name in ["Consolas", "Lucida Console", "Courier New"]:
+        if name in available:
+            FONT_MONO = name
+            break
 
 
 if __name__ == "__main__":
