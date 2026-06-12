@@ -28,3 +28,8 @@ desktop.ini
 *.tmp
 *.bak
 *.log
+
+# Build scripts and artifacts
+build_*.ps1
+python32/
+*-build_*.md
