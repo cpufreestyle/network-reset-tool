@@ -33,3 +33,29 @@ desktop.ini
 build_*.ps1
 python32/
 *-build_*.md
+# Binary files - use GitHub Releases instead
+*.exe
+*.dll
+*.so
+*.dylib
+*.jar
+*.war
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+*.msi
+*.apk
+*.ipa
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
