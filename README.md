@@ -89,6 +89,13 @@
 
 > 修复逻辑在 `ProxyRepairTool` 类中，UI 在 `ProxyPanel` 标签页中。Clash 配置目录会自动按优先级探测常见位置（`%LOCALAPPDATA%/moe.elaina.clash.nyanpasu/.config/clash-verge` 等），无需手动指定。
 
+### 构建产物（两版并存）
+
+- `网络工具箱.exe` —— 64-bit（PE x64），适用于 Windows 10/11。
+- `网络工具箱_win7_x86.exe` —— 32-bit（PE i386），使用 Python 3.11.9 32-bit + PyInstaller 6.20 编译，兼容 Windows 7 32 位。
+
+> 编译命令（32 位）：`py -3.11-32 -m PyInstaller 网络工具箱.spec --distpath dist32`
+
 ---
 
 ## 新功能 (v2.2)
@@ -124,6 +131,16 @@
 :: 右键以管理员身份运行
 network-reset.bat
 ```
+
+启动后菜单：
+
+1. 完整网络重置（6阶段）
+2. 快速 DNS 切换
+3. 网络诊断
+4. **代理修复** —— 一键打开 GUI 并直接定位到「🛡️ 代理修复」标签页（优先用 `网络工具箱.exe`，Win7 32 位回退到 `网络工具箱_win7_x86.exe`，均无则回退到 `python network_reset_gui.py --tab proxy`）
+5. 退出
+
+> 也可直接用 GUI 启动参数打开指定标签页：`网络工具箱.exe --tab proxy|diagnostic|reset`
 
 ### macOS 版
 
