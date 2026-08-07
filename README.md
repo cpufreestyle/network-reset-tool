@@ -1,4 +1,4 @@
-# 网络工具箱 v3.1.1
+# 网络工具箱 v3.2
 
 <p align="center">
   <img src="https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/cover.png" width="800" alt="网络工具箱" />
@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%207%2B-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/Python-3.11-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-v3.1.1-orange.svg)]()
+[![Version](https://img.shields.io/badge/Version-v3.2-orange.svg)]()
 
 修复网络连接问题 · 重置 Winsock/TCP/IP · 清除 DNS/ARP 缓存 · 网络诊断（Ping/DNS/Traceroute）
 
@@ -28,6 +28,7 @@
 |  Windows 7 支持 | 全面兼容 32/64 位 Windows 7+ |
 |  macOS 支持 | 完整的 macOS 网络重置工具 |
 |  命令行版 | 轻量批处理脚本，兼容 Win7+ |
+|  🛡️ 代理修复 | 诊断/修复系统代理指向宕机端口、Clash DNS 关闭导致的外网连不上 |
 
 ## 下载
 
@@ -73,6 +74,23 @@
 
 ---
 
+## 新功能 (v3.2) - 代理修复（针对"外网连不上"）
+
+新增第三个标签页 **🛡️ 代理修复**，专门解决两类最常见的"能上网但外网连不上"根因：
+
+### 能诊断的问题
+- **系统代理指向已宕机的端口**：例如浏览器/系统走 `127.0.0.1:7897`，但该端口没有任何服务在监听，导致外网全部失败（常见于 Comet、Chrome 等被写死代理端口的浏览器）。
+- **Clash(mihomo) 的 DNS 被关闭**：订阅里 `dns.enable: false` 却配了 `enhanced-mode: fake-ip`，互相矛盾，导致所有域名解析 `i/o timeout`。
+- **代理核心端口探测**：自动发现正在运行的 Clash / mihomo 核心，并读取其真正的代理端口（`mixed-port`）。
+
+### 一键修复
+- 系统代理端口死了 → 自动把系统代理重新指向正在工作的 Clash 代理端口。
+- Clash DNS 被关 → 自动把 `clash-config.yaml` 与 `clash-guard-overrides.yaml` 的 `dns.enable` 改为 `true`（guard 覆盖确保订阅更新后不回退），并通过外部控制接口重启核心使其生效。
+
+> 修复逻辑在 `ProxyRepairTool` 类中，UI 在 `ProxyPanel` 标签页中。Clash 配置目录会自动按优先级探测常见位置（`%LOCALAPPDATA%/moe.elaina.clash.nyanpasu/.config/clash-verge` 等），无需手动指定。
+
+---
+
 ## 新功能 (v2.2)
 
 ### Tab 布局重构
@@ -97,7 +115,8 @@
 2. 右键选择 **以管理员身份运行**
 3. 切换到 **网络诊断** 标签，先诊断问题
 4. 或切换到 **网络重置** 标签，点击 **一键重置全部**
-5. 重启电脑使设置生效
+5. 若"外网连不上"但本地网络正常，切换到 **🛡️ 代理修复** 标签，先 **诊断代理** 再 **一键修复**
+6. 重启电脑使设置生效
 
 ### Windows 命令行版
 
@@ -116,7 +135,7 @@ sudo python3 network_reset_macos.py
 
 ```
 network-reset-tool/
-  network_reset_gui.py      # Windows GUI 源码 (v3.1.1)
+  network_reset_gui.py      # Windows GUI 源码 (v3.2)
   network_reset_macos.py    # macOS GUI 源码 (v2.0)
   network-reset.bat         # Windows 命令行版 (v1.0)
   .gitignore

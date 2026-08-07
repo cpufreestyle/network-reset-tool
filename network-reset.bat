@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-title 网络工具箱 v3.1 - 网络重置工具
+title 网络工具箱 v3.2 - 网络重置工具
 color 0A
 
 net session >nul 2>&1
@@ -19,21 +19,23 @@ setlocal enabledelayedexpansion
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.1
-echo     网络重置 + DNS切换 + 诊断
+echo     网络工具箱 v3.2
+echo     网络重置 + DNS切换 + 诊断 + 代理修复
 echo  ========================================
 echo.
 echo  [1] 完整网络重置（6阶段）
 echo  [2] 快速DNS切换
 echo  [3] 网络诊断
-echo  [4] 退出
+echo  [4] 代理修复（系统代理/Clash）
+echo  [5] 退出
 echo.
-set /p choice=请选择 (1-4): 
+set /p choice=请选择 (1-5): 
 
 if "%choice%"=="1" goto FULL_RESET
 if "%choice%"=="2" goto DNS_SWITCH
 if "%choice%"=="3" goto DIAGNOSTIC
-if "%choice%"=="4" exit /b 0
+if "%choice%"=="4" goto PROXY_FIX
+if "%choice%"=="5" exit /b 0
 goto MENU
 
 :: ============================================================
@@ -43,7 +45,7 @@ goto MENU
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.1 - 完整网络重置
+echo     网络工具箱 v3.2 - 完整网络重置
 echo  ========================================
 echo.
 
@@ -115,7 +117,7 @@ goto MENU
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.1 - DNS 快速切换
+echo     网络工具箱 v3.2 - DNS 快速切换
 echo  ========================================
 echo.
 
@@ -191,7 +193,7 @@ goto MENU
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.1 - 网络诊断
+echo     网络工具箱 v3.2 - 网络诊断
 echo  ========================================
 echo.
 
@@ -269,6 +271,55 @@ echo  ========================================
 echo.
 echo  提示: 如果外网 ping 失败但网关正常，
 echo  可能是 DNS 问题，请尝试切换 DNS
+echo.
+pause
+goto MENU
+
+:: ============================================================
+::  代理修复（一键打开 GUI 的代理修复标签页）
+:: ============================================================
+:PROXY_FIX
+cls
+echo.
+echo  ========================================
+echo     网络工具箱 v3.2 - 代理修复
+echo  ========================================
+echo.
+echo  正在启动代理修复工具...
+echo  (将打开图形界面并定位到 "🛡️ 代理修复" 标签)
+echo.
+
+:: 优先使用打包好的 EXE（同目录），回退到 python 运行源码
+set "EXE_PATH=%~dp0网络工具箱.exe"
+if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0网络工具箱_win7_x86.exe"
+if exist "%EXE_PATH%" (
+    start "" "%EXE_PATH%" --tab proxy
+    goto PROXY_DONE
+)
+
+:: 回退：尝试 python 启动源码
+set "SRC_PATH=%~dp0network_reset_gui.py"
+if exist "%SRC_PATH%" (
+    where py >nul 2>&1 && (
+        start "" py -3.11 "%SRC_PATH%" --tab proxy
+        goto PROXY_DONE
+    )
+    where python >nul 2>&1 && (
+        start "" python "%SRC_PATH%" --tab proxy
+        goto PROXY_DONE
+    )
+    echo  未找到 Python 运行环境，无法启动图形界面。
+    echo  请安装 Python 3.11 或使用 "网络工具箱.exe"。
+    pause
+    goto MENU
+)
+
+echo  未找到 网络工具箱.exe 或 network_reset_gui.py。
+pause
+goto MENU
+
+:PROXY_DONE
+echo  已启动代理修复工具（若未弹出窗口，请在任务栏查看）。
 echo.
 pause
 goto MENU

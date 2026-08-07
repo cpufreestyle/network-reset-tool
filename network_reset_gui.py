@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Windows 网络重置工具 - GUI 版本 v3.1
+Windows 网络重置工具 - GUI 版本 v3.2
 修复:
   1. DNS切换"未找到活动网卡"问题 - 改进适配器检测逻辑
   2. 日志界面闪退 - 修复线程安全问题
@@ -764,6 +764,382 @@ if ($adapters) {
         if progress_callback:
             progress_callback(100, "诊断完成")
         return results
+
+
+# ============================================================
+#  代理 / Clash 诊断与修复
+# ============================================================
+
+class ProxyRepairTool:
+    """代理 / Clash 诊断与修复
+
+    针对"外网连不上"最常见的两类根因:
+      1. 系统代理指向了一个已经宕机 / 未监听的端口(例如 7897 无人监听)
+         -> 浏览器/系统走该端口全部失败
+      2. Clash(mihomo) 的 dns.enable 被关掉,而 enhanced-mode=fake-ip,
+         导致所有域名解析 i/o timeout,代理节点与直连域名全部超时
+
+    对应修复: 把系统代理重新指向真正在工作的 Clash 端口; 并开启 Clash DNS。
+    """
+
+    # Clash 系常见配置目录(按优先级探测)
+    CLASH_CONFIG_DIRS = [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                     "moe.elaina.clash.nyanpasu", ".config", "clash-verge"),
+        os.path.join(os.environ.get("APPDATA", ""),
+                     "moe.elaina.clash.nyanpasu", ".config", "clash-verge"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "clash-verge", "config"),
+        r"D:\Software\Clash.Nyanpasu_1.6.1_x64_portable\.config\clash-verge",
+    ]
+
+    def __init__(self, log_callback=None):
+        self.log_callback = log_callback
+
+    def log(self, msg, color=None):
+        if self.log_callback:
+            self.log_callback(msg, color)
+
+    # ---------- 系统代理 ----------
+    def get_system_proxy(self):
+        import winreg
+        enable, server = 0, ""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+            try:
+                enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+            except FileNotFoundError:
+                enable = 0
+            try:
+                server, _ = winreg.QueryValueEx(key, "ProxyServer")
+            except FileNotFoundError:
+                server = ""
+            winreg.CloseKey(key)
+        except Exception as e:
+            self.log(f"读取系统代理失败: {e}")
+        return bool(enable), (server or "").strip()
+
+    @staticmethod
+    def parse_proxy_server(server):
+        """解析 ProxyServer -> [(scheme, host, port), ...]"""
+        results = []
+        server = (server or "").strip()
+        if not server:
+            return results
+        for part in server.replace(' ', '').split(';'):
+            if '=' in part:
+                scheme, addr = part.split('=', 1)
+            else:
+                scheme, addr = 'http', part
+            if ':' in addr:
+                host, _, port = addr.rpartition(':')
+                try:
+                    results.append((scheme, host, int(port)))
+                except ValueError:
+                    continue
+        return results
+
+    @staticmethod
+    def is_port_open(host, port, timeout=2):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect((host, port))
+            s.close()
+            return True
+        except Exception:
+            return False
+
+    def set_system_proxy(self, host, port, enable=True):
+        import winreg
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                                 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1 if enable else 0)
+            winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, f"{host}:{port}")
+            try:
+                winreg.QueryValueEx(key, "ProxyOverride")
+            except FileNotFoundError:
+                winreg.SetValueEx(key, "ProxyOverride", 0, winreg.REG_SZ,
+                                  "localhost;127.*;[::1]")
+            winreg.CloseKey(key)
+            ctypes.windll.Wininet.InternetSetOptionW(0, 39, 0, 0)  # SETTINGS_CHANGED
+            ctypes.windll.Wininet.InternetSetOptionW(0, 37, 0, 0)  # REFRESH
+            return True
+        except Exception as e:
+            self.log(f"设置系统代理失败: {e}")
+            return False
+
+    # ---------- 发现运行中的代理核心 ----------
+    def find_proxy_cores(self):
+        cores = []
+        try:
+            ps = ('Get-NetTCPConnection -State Listen | '
+                  'Select-Object LocalPort,OwningProcess | '
+                  'ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; '
+                  'if ($p) { Write-Output ($_.LocalPort.ToString() + ":" + $p.Name) } }')
+            out = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
+                                 capture_output=True, timeout=15).stdout
+            out = out.decode('utf-8', errors='replace')
+            for line in out.splitlines():
+                line = line.strip()
+                if ':' in line:
+                    port_s, _, name = line.rpartition(':')
+                    try:
+                        cores.append({'port': int(port_s), 'process': name})
+                    except ValueError:
+                        continue
+        except Exception as e:
+            self.log(f"扫描监听端口失败: {e}")
+        return cores
+
+    def find_clash_core(self):
+        for c in self.find_proxy_cores():
+            n = (c.get('process') or '').lower()
+            if 'mihomo' in n or 'clash' in n:
+                return c
+        return None
+
+    # ---------- Clash 配置检查 / 修复 ----------
+    def find_clash_config_dir(self):
+        for d in self.CLASH_CONFIG_DIRS:
+            if d and os.path.isdir(d):
+                return d
+        return None
+
+    def read_clash_mixed_port(self, cfg_dir):
+        path = os.path.join(cfg_dir, 'clash-config.yaml')
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    st = line.strip()
+                    if st.startswith('mixed-port:'):
+                        try:
+                            return int(st.split(':', 1)[1].strip())
+                        except ValueError:
+                            return None
+        except Exception:
+            pass
+        return None
+
+    def read_clash_controller(self, cfg_dir):
+        port, secret = None, None
+        if os.path.isfile(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        st = line.strip()
+                        if st.startswith('external-controller:'):
+                            val = st.split(':', 1)[1].strip()
+                            if ':' in val:
+                                _, _, p = val.rpartition(':')
+                                try:
+                                    port = int(p)
+                                except ValueError:
+                                    pass
+                        elif st.startswith('secret:'):
+                            secret = st.split(':', 1)[1].strip().strip('"\'')
+            except Exception:
+                pass
+        return port, secret
+
+    def read_clash_dns_enabled(self, cfg_dir):
+        path = os.path.join(cfg_dir, 'clash-config.yaml')
+        if not os.path.isfile(path):
+            return None
+        enabled, _ = self._scan_dns_enable(path)
+        return enabled
+
+    def _scan_dns_enable(self, path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except Exception:
+            return None, False
+        in_dns = False
+        base_indent = None
+        for line in lines:
+            st = line.lstrip()
+            ind = len(line) - len(st)
+            if st.startswith('dns:'):
+                in_dns = True
+                base_indent = ind
+                continue
+            if in_dns:
+                if st and ind <= base_indent:
+                    in_dns = False
+                    continue
+                if st.startswith('enable:'):
+                    val = st.split(':', 1)[1].strip().lower()
+                    return val == 'true', True
+        return None, False
+
+    def enable_clash_dns(self, cfg_dir):
+        changed = []
+        for fname in ['clash-config.yaml', 'clash-guard-overrides.yaml']:
+            path = os.path.join(cfg_dir, fname)
+            if not os.path.isfile(path):
+                continue
+            if self._set_dns_enable_true(path):
+                changed.append(fname)
+        return changed
+
+    def _set_dns_enable_true(self, path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except Exception as e:
+            self.log(f"读取 {os.path.basename(path)} 失败: {e}")
+            return False
+        out = []
+        changed = False
+        in_dns = False
+        base_indent = None
+        for line in lines:
+            st = line.lstrip()
+            ind = len(line) - len(st)
+            if st.startswith('dns:'):
+                in_dns = True
+                base_indent = ind
+                out.append(line)
+                continue
+            if in_dns:
+                if st and ind <= base_indent:
+                    in_dns = False
+                elif st.startswith('enable:'):
+                    prefix = line[:line.index('enable:')]
+                    new = f"{prefix}enable: true\n"
+                    if new.strip() != line.strip():
+                        changed = True
+                    out.append(new)
+                    continue
+            out.append(line)
+        if changed:
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.writelines(out)
+            except Exception as e:
+                self.log(f"写入 {os.path.basename(path)} 失败: {e}")
+                return False
+        return changed
+
+    def restart_clash_core(self, port=17650, secret=None):
+        import urllib.request
+        url = f"http://127.0.0.1:{port}/restart"
+        headers = {}
+        if secret:
+            headers['Authorization'] = f"Bearer {secret}"
+        try:
+            req = urllib.request.Request(url, headers=headers, method='POST')
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                return resp.status == 200
+        except Exception as e:
+            self.log(f"重启 Clash 核心失败: {e}")
+            return False
+
+    # ---------- 一键诊断 ----------
+    def diagnose(self):
+        """返回诊断结论字典"""
+        result = {
+            'proxy_enabled': False,
+            'proxy_server': '',
+            'proxy_ports': [],
+            'proxy_alive': None,
+            'clash_core': None,
+            'clash_dns': None,
+            'issues': [],
+            'suggestions': [],
+        }
+        en, server = self.get_system_proxy()
+        result['proxy_enabled'] = en
+        result['proxy_server'] = server
+        ports = self.parse_proxy_server(server)
+        result['proxy_ports'] = ports
+        alive_any = None
+        for _, host, port in ports:
+            ok = self.is_port_open(host, port)
+            alive_any = ok if alive_any is None else (alive_any or ok)
+        result['proxy_alive'] = alive_any
+        if en and ports and alive_any is False:
+            result['issues'].append(
+                f"系统代理指向 {server} 但该端口没有服务在监听,外网会全部失败")
+            result['suggestions'].append(
+                "把系统代理重新指向真正在工作的代理端口(见下方「代理核心」)")
+        core = self.find_clash_core()
+        result['clash_core'] = core
+        cfg_dir = self.find_clash_config_dir()
+        proxy_port = self.read_clash_mixed_port(cfg_dir) if cfg_dir else None
+        result['clash_proxy_port'] = proxy_port
+        if core:
+            if proxy_port:
+                result['suggestions'].append(
+                    f"发现 Clash 核心({core['process']}),其代理端口为 {proxy_port},可把系统代理指向它")
+            else:
+                result['suggestions'].append(
+                    f"发现 Clash 核心在端口 {core['port']} 运行({core['process']}),可把系统代理指向它")
+        cfg_dir = self.find_clash_config_dir()
+        if cfg_dir:
+            dns_on = self.read_clash_dns_enabled(cfg_dir)
+            result['clash_dns'] = dns_on
+            if dns_on is False:
+                result['issues'].append(
+                    "Clash 的 dns.enable=false,而 enhanced-mode=fake-ip,会导致所有域名解析超时")
+                result['suggestions'].append(
+                    "开启 Clash DNS(enable:true)并重启核心")
+        elif core:
+            result['suggestions'].append(
+                "未找到 Clash 配置目录,无法自动修复 DNS,请手动检查订阅")
+        if not result['issues']:
+            result['suggestions'].append("未发现明显代理问题")
+        return result
+
+    # ---------- 一键修复 ----------
+    def repair(self):
+        """返回 (success, list_of_actions)"""
+        actions = []
+        ok = True
+        en, server = self.get_system_proxy()
+        ports = self.parse_proxy_server(server)
+        alive = any(self.is_port_open(h, p) for _, h, p in ports) if ports else False
+        core = self.find_clash_core()
+        cfg_dir = self.find_clash_config_dir()
+        target_port = self.read_clash_mixed_port(cfg_dir) if cfg_dir else None
+        if target_port is None and core:
+            target_port = core['port']
+        # 1) 系统代理端口死了 -> 指向 Clash 代理端口
+        if en and ports and not alive and target_port:
+            if self.set_system_proxy('127.0.0.1', target_port, enable=True):
+                actions.append(f"系统代理已重新指向 Clash 端口 127.0.0.1:{target_port}")
+            else:
+                ok = False
+                actions.append("系统代理重设失败")
+        elif (not en) and target_port:
+            if self.set_system_proxy('127.0.0.1', target_port, enable=True):
+                actions.append(f"已为系统启用代理并指向 Clash 端口 127.0.0.1:{target_port}")
+            else:
+                ok = False
+        # 2) Clash DNS 关闭 -> 开启并重启
+        cfg_dir = self.find_clash_config_dir()
+        if cfg_dir:
+            dns_on = self.read_clash_dns_enabled(cfg_dir)
+            if dns_on is False:
+                changed = self.enable_clash_dns(cfg_dir)
+                if changed:
+                    actions.append(f"已开启 Clash DNS: {', '.join(changed)}")
+                    port, secret = self.read_clash_controller(cfg_dir)
+                    if port:
+                        if self.restart_clash_core(port, secret):
+                            actions.append("已重启 Clash 核心使 DNS 生效")
+                        else:
+                            actions.append("DNS 配置已改,但核心重启失败(请手动在 GUI 里应用/重启)")
+                else:
+                    actions.append("Clash DNS 无需修改")
+        if not actions:
+            actions.append("无需修复")
+        return ok, actions
 
 
 # ============================================================
@@ -1803,8 +2179,209 @@ class DiagnosticPanel(tk.Frame):
 #  主窗口
 # ============================================================
 
+class ProxyPanel(tk.Frame):
+    """第三个标签页:代理诊断与修复"""
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=COLORS["bg"])
+        self._running = False
+        self._build_ui()
+
+    def _build_ui(self):
+        header = tk.Frame(self, bg=COLORS["surface"], pady=12)
+        header.pack(fill="x")
+        tk.Label(header, text="🛡️ 代理诊断与修复", font=(FONT_FAMILY, 16, "bold"),
+                 fg=COLORS["text"], bg=COLORS["surface"]).pack()
+        tk.Label(header, text="检测系统代理 / Clash 端口与 DNS · 一键修复外网连不上",
+                 font=(FONT_FAMILY, 9), fg=COLORS["muted"], bg=COLORS["surface"]).pack()
+
+        ctrl = tk.Frame(self, bg=self["bg"], pady=10, padx=20)
+        ctrl.pack(fill="x")
+        self.btn_diag = styled_btn(ctrl, "🔍 诊断代理", self._do_diagnose,
+                                   COLORS["green"], font_size=12, bold=True)
+        self.btn_diag.pack(side="left", padx=(0, 8))
+        self.btn_repair = styled_btn(ctrl, "🔧 一键修复", self._do_repair,
+                                     COLORS["orange"], font_size=12, bold=True)
+        self.btn_repair.pack(side="left", padx=4)
+
+        self.proxy_progress = ttk.Progressbar(self, mode="indeterminate")
+        self.proxy_progress.pack(fill="x", padx=20, pady=(0, 5))
+        self.proxy_status = tk.Label(self, text="就绪", font=(FONT_FAMILY, 9),
+                                     fg=COLORS["muted"], bg=self["bg"], anchor="w")
+        self.proxy_status.pack(fill="x", padx=20)
+
+        style = ttk.Style(self)
+        style.theme_use("default")
+        style.configure("HP.Horizontal.TProgressbar",
+                        troughcolor=COLORS["surface"], background=COLORS["orange"], thickness=6)
+
+        result_frame = tk.Frame(self, bg=self["bg"])
+        result_frame.pack(fill="both", expand=True, padx=20, pady=8)
+        canvas = tk.Canvas(result_frame, bg=COLORS["bg2"], highlightthickness=0)
+        scrollbar = tk.Scrollbar(result_frame, orient="vertical", command=canvas.yview)
+        self.results_inner = tk.Frame(canvas, bg=COLORS["bg2"])
+        self.results_inner.bind("<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=self.results_inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self._show_hint()
+
+    def _show_hint(self):
+        for w in self.results_inner.winfo_children():
+            w.destroy()
+        tk.Label(self.results_inner,
+                 text="点击「诊断代理」检测以下问题:\n\n"
+                      "🔌 系统代理是否指向已宕机的端口(外网会全部失败)\n"
+                      "🛡️ 是否发现正在运行的 Clash / mihomo 代理核心\n"
+                      "🌐 Clash 的 dns.enable 是否被关掉(导致域名解析超时)\n\n"
+                      "发现问题后点「一键修复」自动处理。",
+                 font=(FONT_FAMILY, 11), fg=COLORS["muted"], bg=COLORS["bg2"],
+                 justify="left", padx=20, pady=30).pack(fill="both", expand=True)
+
+    def _clear_results(self):
+        for w in self.results_inner.winfo_children():
+            w.destroy()
+
+    def _set_status(self, msg, color=None):
+        self.proxy_status.config(text=msg, fg=color or COLORS["muted"])
+
+    def _set_running(self, running):
+        self._running = running
+        state = "disabled" if running else "normal"
+        self.btn_diag.config(state=state)
+        self.btn_repair.config(state=state)
+        if running:
+            self.proxy_progress.start(8)
+        else:
+            self.proxy_progress.stop()
+
+    def _card(self, parent, title, bg="#2a2a3e"):
+        f = tk.Frame(parent, bg=bg, padx=12, pady=8)
+        f.pack(fill="x", pady=2)
+        tk.Label(f, text=title, font=(FONT_FAMILY, 10, "bold"),
+                 fg=COLORS["text"], bg=bg).pack(anchor="w")
+        return f
+
+    def _result_ok(self, parent, text, sub=""):
+        tk.Label(parent, text=f"  ✅ {text}", font=(FONT_FAMILY, 10),
+                 fg=COLORS["green"], bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
+        if sub:
+            tk.Label(parent, text=f"      {sub}", font=(FONT_FAMILY, 9),
+                     fg=COLORS["subtext"], bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
+
+    def _result_fail(self, parent, text, sub=""):
+        tk.Label(parent, text=f"  ❌ {text}", font=(FONT_FAMILY, 10),
+                 fg=COLORS["red"], bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
+        if sub:
+            tk.Label(parent, text=f"      {sub}", font=(FONT_FAMILY, 9),
+                     fg=COLORS["subtext"], bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
+
+    def _result_info(self, parent, text):
+        tk.Label(parent, text=f"  {text}", font=(FONT_FAMILY, 9),
+                 fg=COLORS["subtext"], bg=parent["bg"], anchor="w").pack(anchor="w", padx=10)
+
+    # ---- 诊断 ----
+    def _do_diagnose(self):
+        if self._running:
+            return
+        self._set_running(True)
+        self._clear_results()
+        self._set_status("⏳ 诊断代理中...", COLORS["green"])
+        threading.Thread(target=self._thread_diagnose, daemon=True).start()
+
+    def _thread_diagnose(self):
+        res = ProxyRepairTool().diagnose()
+        self.after(0, self._clear_results)
+
+        row = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row.pack(fill="x", pady=4, padx=4)
+        card = self._card(row, "🔌 系统代理", bg="#2a2a3e")
+        if res['proxy_enabled']:
+            srv = res['proxy_server'] or "(空)"
+        else:
+            srv = None
+        if res['proxy_enabled']:
+            self.after(0, lambda r=card, s=srv: self._result_info(r, f"已启用,地址: {s}"))
+        else:
+            self.after(0, lambda r=card: self._result_info(r, "未启用系统代理"))
+        if res['proxy_ports']:
+            if res['proxy_alive']:
+                self.after(0, lambda r=card: self._result_ok(r, "代理端口可连通", "外网出口正常"))
+            else:
+                self.after(0, lambda r=card: self._result_fail(r, "代理端口无服务监听", "外网会全部失败!"))
+
+        row2 = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row2.pack(fill="x", pady=4, padx=4)
+        card2 = self._card(row2, "🛡️ 代理核心", bg="#2a2a3e")
+        core = res['clash_core']
+        if core:
+            pp = res.get('clash_proxy_port')
+            if pp:
+                self.after(0, lambda r=card2, c=core, p=pp:
+                           self._result_ok(r, f"发现 {c['process']} (代理端口 {p})"))
+            else:
+                self.after(0, lambda r=card2, c=core:
+                           self._result_ok(r, f"发现 {c['process']} 在端口 {c['port']} 运行"))
+        else:
+            self.after(0, lambda r=card2: self._result_info(r, "未发现 Clash/mihomo 核心"))
+
+        row3 = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row3.pack(fill="x", pady=4, padx=4)
+        card3 = self._card(row3, "🌐 Clash DNS", bg="#2a2a3e")
+        dns = res['clash_dns']
+        if dns is True:
+            self.after(0, lambda r=card3: self._result_ok(r, "dns.enable = true", "DNS 模块正常"))
+        elif dns is False:
+            self.after(0, lambda r=card3: self._result_fail(r, "dns.enable = false", "fake-ip 模式下会导致解析超时!"))
+        else:
+            self.after(0, lambda r=card3: self._result_info(r, "未找到 Clash 配置,无法检测"))
+
+        row4 = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row4.pack(fill="x", pady=4, padx=4)
+        card4 = self._card(row4, "💡 诊断结论", bg="#2a2a3e")
+        if res['issues']:
+            for issue in res['issues']:
+                self.after(0, lambda r=card4, t=issue: self._result_fail(r, t))
+            self.after(0, lambda r=card4: self._result_info(r, "建议点击「一键修复」自动处理"))
+            self.after(0, lambda: self._set_status("⚠ 发现代理问题,可一键修复", COLORS["yellow"]))
+        else:
+            self.after(0, lambda r=card4: self._result_ok(r, "未发现明显代理问题"))
+            self.after(0, lambda: self._set_status("✅ 代理诊断正常", COLORS["green"]))
+
+        self.after(0, lambda: self._set_running(False))
+
+    # ---- 修复 ----
+    def _do_repair(self):
+        if self._running:
+            return
+        self._set_running(True)
+        self._clear_results()
+        self._set_status("⏳ 正在修复...", COLORS["orange"])
+        threading.Thread(target=self._thread_repair, daemon=True).start()
+
+    def _thread_repair(self):
+        tool = ProxyRepairTool(log_callback=self._safe_log)
+        ok, actions = tool.repair()
+        self.after(0, self._clear_results)
+        row = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row.pack(fill="x", pady=4, padx=4)
+        card = self._card(row, "🔧 修复结果", bg="#2a2a3e")
+        if not actions:
+            self.after(0, lambda r=card: self._result_info(r, "无需修复,或请先点「诊断代理」"))
+        for a in actions:
+            self.after(0, lambda r=card, t=a: self._result_info(r, "• " + t))
+        if ok:
+            self.after(0, lambda r=card: self._result_ok(r, "修复完成!", "建议重开浏览器/相关程序使代理生效"))
+            self.after(0, lambda: self._set_status("✅ 代理修复完成", COLORS["green"]))
+        else:
+            self.after(0, lambda r=card: self._result_fail(r, "部分修复失败", "请查看上方信息/手动处理"))
+            self.after(0, lambda: self._set_status("⚠ 修复未完全成功", COLORS["yellow"]))
+        self.after(0, lambda: self._set_running(False))
+
+    def _safe_log(self, msg, color=None):
+        self.after(0, lambda m=msg: self._set_status("修复中: " + m[:60], COLORS["orange"]))
+
+
 class App(tk.Tk):
-    def __init__(self):
+    def __init__(self, start_tab=None):
         super().__init__()
 
         # 检测系统字体（Win7 兼容）
@@ -1817,7 +2394,7 @@ class App(tk.Tk):
         except Exception:
             pass
 
-        self.title("网络工具箱 v3.1 ✨")
+        self.title("网络工具箱 v3.2 ✨")
         self.geometry("780x640")
         self.minsize(720, 580)
         self.configure(bg=COLORS["bg"])
@@ -1834,7 +2411,7 @@ class App(tk.Tk):
                 "祝天下所有妈妈:\n"
                 "健康平安,笑口常开!\n\n"
                 "❤️ 感谢您一直以来的付出 ❤️\n\n"
-                "-- 您的网络工具箱 v3.1"
+                "-- 您的网络工具箱 v3.2"
             )
             # 母亲节是每年5月第二个周日,2026年是5月10日
             if today.month == 5 and today.day in [9, 10]:
@@ -1844,6 +2421,10 @@ class App(tk.Tk):
 
         self._build_ui()
 
+        # 若指定了启动标签页，则直接切换过去
+        if start_tab and start_tab in self.tab_buttons:
+            self._switch_tab(start_tab)
+
     def _build_ui(self):
         # 顶部标题栏
         topbar = tk.Frame(self, bg=COLORS["surface"], pady=8, padx=15)
@@ -1851,7 +2432,7 @@ class App(tk.Tk):
         tk.Label(topbar, text="🛠️  网络工具箱",
                  font=(FONT_FAMILY, 14, "bold"), fg=COLORS["text"],
                  bg=COLORS["surface"]).pack(side="left")
-        tk.Label(topbar, text="v3.1  ·  重置 + 诊断  ·  🌸 母亲节快乐!",
+        tk.Label(topbar, text="v3.2  ·  重置 + 诊断  ·  🌸 母亲节快乐!",
                  font=(FONT_FAMILY, 9), fg=COLORS["pink"],
                  bg=COLORS["surface"]).pack(side="left", padx=10)
 
@@ -1862,6 +2443,7 @@ class App(tk.Tk):
         tabs = [
             ("reset",       "🔄 网络重置"),
             ("diagnostic",  "🔍 网络诊断"),
+            ("proxy",       "🛡️ 代理修复"),
         ]
         tab_btn_frame = tk.Frame(tabbar, bg=COLORS["surface2"])
         tab_btn_frame.pack(side="left")
@@ -1894,10 +2476,14 @@ class App(tk.Tk):
         self.diag_panel.pack(fill="both", expand=True)
         self.diag_panel.forget()  # hidden by default
 
+        self.proxy_panel = ProxyPanel(self.content)
+        self.proxy_panel.pack(fill="both", expand=True)
+        self.proxy_panel.forget()  # hidden by default
+
         # 底部版本信息
         footer = tk.Frame(self, bg=COLORS["surface"], pady=4)
         footer.pack(fill="x")
-        tk.Label(footer, text="Network Reset Tool v3.1  ·  michaelqiu  ·  🌷 5月10日 母亲节",
+        tk.Label(footer, text="Network Reset Tool v3.2  ·  michaelqiu  ·  🌷 5月10日 母亲节",
                  font=(FONT_FAMILY, 8), fg=COLORS["muted"], bg=COLORS["surface"]).pack(side="right", padx=10)
 
     def _switch_tab(self, tid):
@@ -1908,12 +2494,13 @@ class App(tk.Tk):
         self.tab_buttons[tid].config(bg=COLORS["surface"], fg=COLORS["green"])
 
         # 切换面板
-        if tid == "reset":
-            self.diag_panel.forget()
-            self.reset_panel.pack(fill="both", expand=True)
-        else:
-            self.reset_panel.forget()
-            self.diag_panel.pack(fill="both", expand=True)
+        for p in (self.reset_panel, self.diag_panel, self.proxy_panel):
+            p.forget()
+        {
+            "reset": self.reset_panel,
+            "diagnostic": self.diag_panel,
+            "proxy": self.proxy_panel,
+        }[tid].pack(fill="both", expand=True)
 
         self._active_tab = tid
 
@@ -1965,7 +2552,15 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        app = App()
+        # 解析启动参数（--tab <reset|diagnostic|proxy>）
+        start_tab = None
+        if "--tab" in sys.argv:
+            try:
+                start_tab = sys.argv[sys.argv.index("--tab") + 1]
+            except IndexError:
+                start_tab = None
+
+        app = App(start_tab=start_tab)
         app.protocol("WM_DELETE_WINDOW", lambda: (_release_singleton(), app.destroy()))
         app.mainloop()
     except Exception as e:
