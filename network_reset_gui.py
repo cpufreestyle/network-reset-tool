@@ -909,25 +909,30 @@ class ProxyRepairTool:
         return None
 
     def read_clash_mixed_port(self, cfg_dir):
-        path = os.path.join(cfg_dir, 'clash-config.yaml')
-        if not os.path.isfile(path):
-            return None
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    st = line.strip()
-                    if st.startswith('mixed-port:'):
-                        try:
-                            return int(st.split(':', 1)[1].strip())
-                        except ValueError:
-                            return None
-        except Exception:
-            pass
-        return None
+        mixed = None
+        # 基准文件 + Clash 运行时 override 文件（后者优先，与 Clash 合并行为一致）
+        for fn in ('clash-config.yaml', 'clash-guard-overrides.yaml'):
+            path = os.path.join(cfg_dir, fn)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        st = line.strip()
+                        if st.startswith('mixed-port:'):
+                            try:
+                                mixed = int(st.split(':', 1)[1].strip())
+                            except ValueError:
+                                pass
+            except Exception:
+                pass
+        return mixed
 
     def read_clash_controller(self, cfg_dir):
         port, secret = None, None
-        if os.path.isfile(path):
+        path = os.path.join(cfg_dir, 'clash-config.yaml')
+        if not os.path.isfile(path):
+            return port, secret
             try:
                 with open(path, 'r', encoding='utf-8') as f:
                     for line in f:
