@@ -933,22 +933,22 @@ class ProxyRepairTool:
         path = os.path.join(cfg_dir, 'clash-config.yaml')
         if not os.path.isfile(path):
             return port, secret
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        st = line.strip()
-                        if st.startswith('external-controller:'):
-                            val = st.split(':', 1)[1].strip()
-                            if ':' in val:
-                                _, _, p = val.rpartition(':')
-                                try:
-                                    port = int(p)
-                                except ValueError:
-                                    pass
-                        elif st.startswith('secret:'):
-                            secret = st.split(':', 1)[1].strip().strip('"\'')
-            except Exception:
-                pass
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    st = line.strip()
+                    if st.startswith('external-controller:'):
+                        val = st.split(':', 1)[1].strip()
+                        if ':' in val:
+                            _, _, p = val.rpartition(':')
+                            try:
+                                port = int(p)
+                            except ValueError:
+                                pass
+                    elif st.startswith('secret:'):
+                        secret = st.split(':', 1)[1].strip().strip('"\'')
+        except Exception:
+            pass
         return port, secret
 
     def read_clash_dns_enabled(self, cfg_dir):
