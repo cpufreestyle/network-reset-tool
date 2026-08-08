@@ -34,8 +34,8 @@
 
 | 版本 | 平台 | 文件 | 说明 |
 |:---:|:---:|:---:|:---|
-| v3.2 | Windows 10/11 64-bit | [网络工具箱.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/网络工具箱.exe) | GUI 图形界面版（免安装） |
-| v3.2 | Windows 7 32-bit | [网络工具箱_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/网络工具箱_win7_x86.exe) | GUI 图形界面版（Win7 兼容、免安装） |
+| v3.2 | Windows 10/11 64-bit | [网络工具箱.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_x64.exe) | GUI 图形界面版（免安装） |
+| v3.2 | Windows 7 32-bit | [网络工具箱_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_win7_x86.exe) | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1.1 | Windows 7/8/10 32-bit | NetworkResetTool_v3_0_win7.exe | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
