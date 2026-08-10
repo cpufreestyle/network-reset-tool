@@ -7,7 +7,7 @@
 **一键重置网络配置，自动保留静态 IP · 智能网络诊断 · Windows 7 兼容**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%207%2B-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%207%2B%20%7C%20macOS-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/Python-3.11-green.svg)]()
 [![Version](https://img.shields.io/badge/Version-v3.2-orange.svg)]()
 
@@ -26,7 +26,7 @@
 |  图形界面 | Windows GUI 版，无需命令行 |
 |  网络诊断 | Ping 测试 / DNS 解析 / Traceroute / 网络总览 |
 |  Windows 7 支持 | 全面兼容 32/64 位 Windows 7+ |
-|  macOS 支持 | 完整的 macOS 网络重置工具 |
+|  macOS 支持 | 跨平台 GUI：代理修复 + DNS 刷新（完整重置仅 Windows） |
 |  命令行版 | 轻量批处理脚本，兼容 Win7+ |
 |  🛡️ 代理修复 | 诊断/修复系统代理指向宕机端口、Clash DNS 关闭导致的外网连不上 |
 
@@ -39,7 +39,7 @@
 | v3.1.1 | Windows 7/8/10 32-bit | NetworkResetTool_v3_0_win7.exe | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
-| v2.0 | macOS | network_reset_macos.py | GUI 图形界面版（需 sudo） |
+| v3.3 | macOS (源码运行) | network_reset_gui.py | 跨平台 GUI（代理修复 + DNS 刷新，需 sudo） |
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 
@@ -100,6 +100,34 @@
 
 ---
 
+## 新功能 (v3.3) - 跨平台（macOS）支持
+
+GUI 源码现在跨平台，同一份 `network_reset_gui.py` 可在 **Windows** 与 **macOS** 上运行。
+
+### macOS 上支持的能力
+
+| 功能 | macOS 实现 |
+|:---:|:---|
+| 🛡️ 代理修复（诊断/一键修复） | Clash 控制器 HTTP + 配置（纯文件/HTTP，两端复用） |
+| 系统代理读取/设置 | `networksetup -getwebproxy / -setwebproxy` |
+| DNS 刷新 | `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder` |
+| DNS 设置/切换 | `networksetup -setdnsservers`（"网络重置"标签页里的自定义 DNS 按钮在 Mac 上保留可用） |
+| ARP 清除 | `sudo arp -ad` |
+| 代理核心发现 | `lsof -iTCP -sTCP:LISTEN` |
+| Clash 配置目录探测 | `~/Library/Application Support/clash-verge-rev/config`、`~/.config/...` |
+
+### macOS 上不支持（自动禁用并提示）
+
+- 完整网络重置：Winsock / TCP-IP / DHCP / 静态 IP 备份恢复（这些是 Windows 专属命令，macOS 无等价物）。
+- 对应 GUI 按钮在 macOS 上会被禁用，并弹出横幅提示改用「🛡️ 代理修复」标签页。
+
+### 技术实现
+
+- 新增 `IS_WINDOWS` / `IS_MAC` 平台常量，`is_admin()` 在 macOS 下用 `os.geteuid()==0` 判断。
+- 所有平台相关调用（代理/端口发现/Clash 目录/DNS/ARP）均按 `sys.platform` 分流，Windows 路径完全不变。
+
+---
+
 ## 新功能 (v2.2)
 
 ### Tab 布局重构
@@ -144,18 +172,39 @@ network-reset.bat
 
 > 也可直接用 GUI 启动参数打开指定标签页：`网络工具箱.exe --tab proxy|diagnostic|reset`
 
-### macOS 版
+### macOS 版（源码运行）
+
+本工具的 GUI 源码（`network_reset_gui.py`）已跨平台，macOS 上可直接用同一份源码运行：
 
 ```bash
-sudo python3 network_reset_macos.py
+# 需 Python 3.11 + Tkinter（brew install python-tk）
+sudo python3 network_reset_gui.py
 ```
+
+> 代理修复 / 系统代理设置 / DNS 刷新等需要管理员权限，请用 `sudo` 运行。
+> 「网络重置」标签页里的完整重置（Winsock/TCP-IP/DHCP/静态IP）仅支持 Windows，
+> 在 macOS 上会自动禁用并提示改用「🛡️ 代理修复」标签页。
+
+#### macOS 打包成 .app（在 Mac 上执行）
+
+```bash
+# 1. 安装依赖
+brew install python-tk
+python3 -m pip install pyinstaller
+
+# 2. 打包（spec 已兼容 macOS）
+python3 -m PyInstaller 网络工具箱.spec --name "网络工具箱"
+
+# 3. 产出 dist/网络工具箱.app，拖进 /Applications 即可双击运行
+```
+
+> 注意：`sudo` 设置的代理可能需要授权，首次运行系统会弹出"终端/网络设置"权限请求，允许即可。
 
 ## 项目结构
 
 ```
 network-reset-tool/
-  network_reset_gui.py      # Windows GUI 源码 (v3.2)
-  network_reset_macos.py    # macOS GUI 源码 (v2.0)
+  network_reset_gui.py      # 跨平台 GUI 源码 (v3.3, Windows + macOS)
   network-reset.bat         # Windows 命令行版 (v1.0)
   .gitignore
   LICENSE
