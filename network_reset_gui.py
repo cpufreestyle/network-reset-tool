@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Windows 网络重置工具 - GUI 版本 v3.2
+网络重置/代理修复工具 - GUI 版本 v3.2 (跨平台: Windows / macOS)
 修复:
   1. DNS切换"未找到活动网卡"问题 - 改进适配器检测逻辑
   2. 日志界面闪退 - 修复线程安全问题
@@ -22,6 +22,7 @@ import subprocess
 import threading
 import time
 import re
+import shlex
 import tkinter as tk
 from tkinter import ttk, messagebox
 import ctypes
@@ -57,15 +58,69 @@ def _release_singleton():
             pass
 
 
+# 平台标识：True 表示运行在 Windows（网络重置/netsh/注册表等仅 Windows 可用）
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MAC = sys.platform == "darwin"
+
+# macOS 上以普通用户运行 netsh 类命令无需管理员，但 flush_dns 需要 sudo。
+# 这里沿用 Windows 语义：返回是否拥有足够权限（Mac 上 root 即视为 admin）。
 def is_admin():
+    if IS_WINDOWS:
+        try:
+            return ctypes.windll.shell32.IsUserAnAdmin()
+        except Exception:
+            return False
+    # macOS / Linux：root 用户视为拥有管理员权限
     try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
+        return os.geteuid() == 0
+    except Exception:
         return False
+
+
+def _mac_primary_service():
+    """返回 macOS 上当前用于默认路由的网络服务名(networksetup 需要服务名)。"""
+    if not IS_MAC:
+        return None
+    try:
+        # 取默认路由所用的接口(en0/en1...)
+        out = subprocess.run(['route', '-n', 'get', '0.0.0.0'],
+                             capture_output=True, text=True, timeout=8).stdout
+        iface = None
+        for line in out.splitlines():
+            s = line.strip()
+            if s.startswith('interface:'):
+                iface = s.split(':', 1)[1].strip()
+                break
+        if not iface:
+            return None
+        # 列出所有服务 -> 找到包含该接口的那一行
+        svcs = subprocess.run(['networksetup', '-listallnetworkservices'],
+                              capture_output=True, text=True, timeout=8).stdout
+        # 同时列出接口映射
+        order = subprocess.run(['networksetup', '-listnetworkserviceorder'],
+                               capture_output=True, text=True, timeout=8).stdout
+        # 形如: (1) Wi-Fi, Device: en0
+        import re as _re
+        for line in order.splitlines():
+            m = _re.search(r'Device:\s*(\S+)', line)
+            if m and m.group(1) == iface:
+                name = line.split(',', 1)[0].split(')', 1)[-1].strip()
+                return name
+        # 退回: 取第一个未禁用的服务
+        for s in svcs.splitlines()[1:]:
+            s = s.strip()
+            if s and not s.startswith('*'):
+                return s
+    except Exception:
+        pass
+    return None
+
 
 
 def _is_win7_or_older():
     """检测是否 Windows 7 或更早版本（Get-NetAdapter/Resolve-DnsName 等命令不可用）"""
+    if not IS_WINDOWS:
+        return False
     try:
         ver = sys.getwindowsversion()
         # Win7 = 6.1, Vista = 6.0, Win2k8 = 6.0, XP = 5.1
@@ -134,6 +189,8 @@ class NetworkResetTool:
             return False
 
     def backup_static_ip(self):
+        if not IS_WINDOWS:
+            return
         self.log("[备份] 静态IP配置...")
         ps_script = '''
 $adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -and $_.DHCPEnabled -eq $false }
@@ -172,6 +229,9 @@ if ($adapters) {
             self.log(f"  备份失败: {e}")
 
     def reset_winsock(self):
+        if not IS_WINDOWS:
+            self.log("  ⚠ 重置 Winsock 仅支持 Windows")
+            return False
         self.log("[操作] 重置 Winsock...")
         if self.run_cmd('netsh winsock reset'):
             self.log("  ✓ Winsock 重置完成")
@@ -181,6 +241,9 @@ if ($adapters) {
             return False
 
     def reset_tcpip(self):
+        if not IS_WINDOWS:
+            self.log("  ⚠ 重置 TCP/IP 仅支持 Windows")
+            return False
         self.log("[操作] 重置 TCP/IP 协议栈...")
         self.run_cmd('netsh int ip reset', timeout=15)
         self.run_cmd('netsh int ipv6 reset', timeout=15)
@@ -189,6 +252,16 @@ if ($adapters) {
 
     def flush_dns(self):
         self.log("[操作] 清除 DNS 缓存...")
+        if IS_MAC:
+            # macOS: 需 sudo; 普通用户会提示权限不足,这里尽量尝试
+            ok = self.run_cmd('sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder',
+                              timeout=15)
+            if ok:
+                self.log("  ✓ DNS 缓存已清除 (macOS)")
+            else:
+                self.log("  ⚠ macOS 清除 DNS 需管理员权限(sudo),"
+                         "请在本机终端运行: sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder")
+            return ok
         if self.run_cmd('ipconfig /flushdns'):
             self.log("  ✓ DNS 缓存已清除")
             return True
@@ -197,6 +270,14 @@ if ($adapters) {
             return False
 
     def flush_arp(self):
+        if IS_MAC:
+            self.log("[操作] 清除 ARP 缓存...")
+            self.run_cmd('sudo arp -ad', timeout=10)
+            self.log("  ✓ ARP 缓存已清除 (macOS)")
+            return True
+        if not IS_WINDOWS:
+            self.log("  ⚠ 清除 ARP 仅支持 Windows/macOS")
+            return False
         self.log("[操作] 清除 ARP 缓存...")
         if self.run_cmd('netsh interface ip delete arpcache'):
             self.log("  ✓ ARP 缓存已清除")
@@ -206,6 +287,9 @@ if ($adapters) {
             return False
 
     def renew_dhcp(self):
+        if not IS_WINDOWS:
+            self.log("  ⚠ 刷新 DHCP 仅支持 Windows")
+            return False
         self.log("[操作] 刷新 DHCP...")
         self.run_cmd('ipconfig /release', timeout=10)
         self.run_cmd('ipconfig /renew', timeout=15)
@@ -213,6 +297,8 @@ if ($adapters) {
         return True
 
     def restore_static_ip(self):
+        if not IS_WINDOWS:
+            return
         if not self.static_configs:
             return
         self.log("[恢复] 静态IP配置...")
@@ -233,6 +319,8 @@ if ($adapters) {
 
     def _backup_proxy(self):
         """备份系统代理设置(保护 Clash 等代理软件配置)"""
+        if not IS_WINDOWS:
+            return
         self.log("[代理] 备份系统代理设置...")
         try:
             import winreg
@@ -255,6 +343,8 @@ if ($adapters) {
 
     def _restore_proxy(self):
         """恢复系统代理设置"""
+        if not IS_WINDOWS:
+            return
         if not hasattr(self, '_proxy_enable') or self._proxy_enable is None:
             self.log("[代理] 无代理配置需要恢复")
             return
@@ -279,6 +369,19 @@ if ($adapters) {
 
     def get_current_dns(self, adapter_name=None):
         """获取当前 DNS 服务器地址"""
+        if IS_MAC:
+            svc = adapter_name or _mac_primary_service()
+            if not svc:
+                return [], 'unknown'
+            try:
+                out = subprocess.run(['networksetup', '-getdnsservers', svc],
+                                     capture_output=True, text=True, timeout=10).stdout
+                lines = [l.strip() for l in out.splitlines() if l.strip()]
+                if lines and lines[0].lower().startswith(('there', 'any')):
+                    return [], 'dhcp'
+                return lines, 'static'
+            except Exception:
+                return [], 'unknown'
         ps_script = '''
 $adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -eq $true }
 if ($adapters) {
@@ -309,6 +412,18 @@ if ($adapters) {
 
     def set_dns(self, adapter_name, primary, secondary=None):
         """设置 DNS 服务器"""
+        if IS_MAC:
+            svc = adapter_name or _mac_primary_service()
+            if not svc:
+                self.log("  ✗ 未找到 macOS 网络服务")
+                return False
+            self.log(f"[macOS] 设置 DNS: {svc}")
+            self.run_cmd(f'sudo networksetup -setdnsservers {shlex.quote(svc)} {primary}'
+                         + (f' {secondary}' if secondary else ''), timeout=15)
+            self.log(f"  ✓ 主 DNS: {primary}")
+            if secondary:
+                self.log(f"  ✓ 备用 DNS: {secondary}")
+            return True
         # 先设主 DNS
         cmd_set_primary = f'netsh interface ip set dns "{adapter_name}" static {primary} primary'
         ok1 = self.run_cmd(cmd_set_primary)
@@ -328,6 +443,15 @@ if ($adapters) {
 
     def set_dhcp_dns(self, adapter_name):
         """切换为 DHCP 自动获取 DNS"""
+        if IS_MAC:
+            svc = adapter_name or _mac_primary_service()
+            if not svc:
+                self.log("  ✗ 未找到 macOS 网络服务")
+                return False
+            self.run_cmd(f'sudo networksetup -setdnsservers {shlex.quote(svc)} Empty',
+                          timeout=15)
+            self.log(f"  ✓ DNS 已切换为自动获取 (DHCP) [macOS: {svc}]")
+            return True
         cmd = f'netsh interface ip set dns "{adapter_name}" dhcp'
         if self.run_cmd(cmd):
             self.log(f"  ✓ DNS 已切换为自动获取 (DHCP)")
@@ -349,6 +473,10 @@ if ($adapters) {
         self.flush_dns()
 
     def run_full_reset(self):
+        if not IS_WINDOWS:
+            self.log("⚠ 完整网络重置(重置 Winsock/TCP-IP/ARP/DHCP/静态IP)仅支持 Windows。")
+            self.log("  → 在 macOS 上请使用「代理修复」标签页修复代理,或终端手动处理。")
+            return
         self.log("=" * 50)
         self.log("🔄 开始完整网络重置")
         self.log("=" * 50)
@@ -791,6 +919,14 @@ class ProxyRepairTool:
         os.path.join(os.environ.get("LOCALAPPDATA", ""), "clash-verge", "config"),
         r"D:\Software\Clash.Nyanpasu_1.6.1_x64_portable\.config\clash-verge",
     ]
+    if IS_MAC:
+        _home = os.path.expanduser("~")
+        CLASH_CONFIG_DIRS = [
+            os.path.join(_home, "Library", "Application Support", "clash-verge-rev", "config"),
+            os.path.join(_home, ".config", "clash-verge", "config"),
+            os.path.join(_home, ".config", "clash-nyanpasu", ".config", "clash-verge"),
+            os.path.join(_home, ".config", "Clash Nyanpasu", ".config", "clash-verge"),
+        ] + CLASH_CONFIG_DIRS
 
     def __init__(self, log_callback=None):
         self.log_callback = log_callback
@@ -801,6 +937,28 @@ class ProxyRepairTool:
 
     # ---------- 系统代理 ----------
     def get_system_proxy(self):
+        if IS_MAC:
+            try:
+                svc = _mac_primary_service()
+                if not svc:
+                    return False, ""
+                out = subprocess.run(['networksetup', '-getwebproxy', svc],
+                                     capture_output=True, text=True, timeout=10).stdout
+                enabled = False
+                host, port = "", ""
+                for line in out.splitlines():
+                    s = line.strip()
+                    if s.startswith('Enabled:'):
+                        enabled = s.split(':', 1)[1].strip().lower() == 'yes'
+                    elif s.startswith('Server:'):
+                        host = s.split(':', 1)[1].strip()
+                    elif s.startswith('Port:'):
+                        port = s.split(':', 1)[1].strip()
+                server = f"{host}:{port}" if (host and port) else ""
+                return enabled, server
+            except Exception as e:
+                self.log(f"读取系统代理失败(macOS): {e}")
+                return False, ""
         import winreg
         enable, server = 0, ""
         try:
@@ -851,6 +1009,25 @@ class ProxyRepairTool:
             return False
 
     def set_system_proxy(self, host, port, enable=True):
+        if IS_MAC:
+            try:
+                svc = _mac_primary_service()
+                if not svc:
+                    self.log("  ⚠ 未找到 macOS 网络服务,无法设置系统代理")
+                    return False
+                if enable:
+                    self.run_cmd(f'sudo networksetup -setwebproxy {shlex.quote(svc)} {host} {port}', timeout=15)
+                    self.run_cmd(f'sudo networksetup -setsecurewebproxy {shlex.quote(svc)} {host} {port}', timeout=15)
+                    self.run_cmd(f'sudo networksetup -setwebproxystate {shlex.quote(svc)} on', timeout=15)
+                    self.run_cmd(f'sudo networksetup -setsecurewebproxystate {shlex.quote(svc)} on', timeout=15)
+                else:
+                    self.run_cmd(f'sudo networksetup -setwebproxystate {shlex.quote(svc)} off', timeout=15)
+                    self.run_cmd(f'sudo networksetup -setsecurewebproxystate {shlex.quote(svc)} off', timeout=15)
+                self.log(f"  ✓ macOS 系统代理已{'启用' if enable else '关闭'}: {host}:{port}")
+                return True
+            except Exception as e:
+                self.log(f"设置系统代理失败(macOS): {e}")
+                return False
         import winreg
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
@@ -874,6 +1051,40 @@ class ProxyRepairTool:
     # ---------- 发现运行中的代理核心 ----------
     def find_proxy_cores(self):
         cores = []
+        if IS_MAC:
+            try:
+                # lsof 列出所有监听 TCP 端口及进程名
+                out = subprocess.run(
+                    ['lsof', '-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'n', '-F', 'p'],
+                    capture_output=True, text=True, timeout=15).stdout
+                pid_to_name = {}
+                name_for_port = {}
+                cur_pid = None
+                cur_name = None
+                for line in out.splitlines():
+                    if line.startswith('p'):
+                        cur_pid = line[1:].strip()
+                        try:
+                            cur_name = subprocess.run(
+                                ['ps', '-o', 'comm=', '-p', cur_pid],
+                                capture_output=True, text=True, timeout=8).stdout.strip()
+                            cur_name = os.path.basename(cur_name)
+                        except Exception:
+                            cur_name = None
+                    elif line.startswith('n') and cur_pid:
+                        addr = line[1:]
+                        if ':' in addr:
+                            port_s = addr.rsplit(':', 1)[1].split('.')[0]
+                            try:
+                                port = int(port_s)
+                            except ValueError:
+                                continue
+                            name = cur_name or ''
+                            cores.append({'port': port, 'process': name})
+                # 也把当前系统代理端口对应的进程补上(若未匹配到名字)
+            except Exception as e:
+                self.log(f"扫描监听端口失败(macOS): {e}")
+            return cores
         try:
             ps = ('Get-NetTCPConnection -State Listen | '
                   'Select-Object LocalPort,OwningProcess | '
@@ -1182,10 +1393,21 @@ class ResetPanel(tk.Frame):
         # 标题
         header = tk.Frame(self, bg=COLORS["surface"], pady=12)
         header.pack(fill="x")
-        tk.Label(header, text="🌐 Windows 网络重置工具", font=(FONT_FAMILY, 16, "bold"),
+        header_title = "🌐 Windows 网络重置工具" if IS_WINDOWS else "🌐 网络重置工具"
+        tk.Label(header, text=header_title, font=(FONT_FAMILY, 16, "bold"),
                  fg=COLORS["text"], bg=COLORS["surface"]).pack()
         tk.Label(header, text="重置网络配置 · 修复网络问题 · 保留静态IP",
                  font=(FONT_FAMILY, 9), fg=COLORS["muted"], bg=COLORS["surface"]).pack()
+
+        # 非 Windows 平台提示横幅 + 禁用 Windows 专属按钮
+        if not IS_WINDOWS:
+            banner = tk.Frame(self, bg="#3a2a2a", padx=12, pady=8)
+            banner.pack(fill="x", padx=20, pady=(0, 6))
+            plat = "macOS" if IS_MAC else "当前平台"
+            tk.Label(banner,
+                     text=f"⚠ 此标签页的完整网络重置(Winsock/TCP-IP/DHCP/静态IP)仅支持 Windows。\n"
+                          f"   {plat} 上请使用「🛡️ 代理修复」标签页修复代理与 DNS。",
+                     font=(FONT_FAMILY, 9), fg="#ffb4a0", bg="#3a2a2a", justify="left").pack(anchor="w")
 
         # 按钮区
         btn_area = tk.Frame(self, bg=self["bg"], pady=12)
@@ -1320,14 +1542,46 @@ class ResetPanel(tk.Frame):
 
         self._log("✅ 程序已就绪,请选择操作...")
 
+        # 非 Windows: 禁用 Windows 专属的重置按钮(系统代理/恢复等仍可用)
+        if not IS_WINDOWS:
+            for w in btn_area.winfo_children():
+                self._disable_widget_tree(w)
+            # 自定义 DNS 应用按钮在 macOS 上仍可用(走 networksetup)
+            if IS_MAC:
+                self._enable_widget(dns_custom_row)
+
         # 刷新当前 DNS 状态
         self.after(500, self._refresh_dns_status)
 
     def _make_btn(self, parent, text, cmd, color):
         return styled_btn(parent, text, cmd, color, font_size=10, bold=True)
 
+    @staticmethod
+    def _disable_widget_tree(widget):
+        """递归禁用某个容器内的所有按钮/输入框"""
+        try:
+            widget.configure(state="disabled")
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            ResetPanel._disable_widget_tree(child)
+
+    @staticmethod
+    def _enable_widget(widget):
+        try:
+            widget.configure(state="normal")
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            ResetPanel._enable_widget(child)
+
     def _get_active_adapter(self):
         """获取活动网卡名称 - Win7 兼容（自动选择 WMI/NetAdapter）"""
+        if IS_MAC:
+            name = _mac_primary_service()
+            if name:
+                self._log(f"  ✓ 检测到网络服务(macOS): {name}")
+            return name
         # Win7: 先试 WMI（更可靠）
         if _is_win7_or_older():
             try:
