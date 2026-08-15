@@ -19,37 +19,48 @@ v3.2 修复:
 import os
 import sys
 import time
+import ctypes
+from ctypes import wintypes
 
-# ===== 单例检测(socket方式) =====
-import socket
+# ===== 单例检测(GUID 命名互斥体,跨进程可靠) =====
+# 原 socket 端口方案在端口被系统保留/TIME_WAIT 时会误报"已有实例",故改用互斥体。
+_SINGLETON_MUTEX_NAME = "Global\\NetworkResetTool_v3_Singleton"
+_SINGLETON_MUTEX = None
+_ERROR_ALREADY_EXISTS = 183
 
-_SINGLETON_PORT = 45678  # 固定端口
-_SINGLETON_SOCKET = None
+_kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+_kernel32.CreateMutexW.restype = wintypes.HANDLE
+_kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+_kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
+_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
 
 def _acquire_singleton():
-    """使用socket端口绑定实现单例检测(Windows友好)"""
-    global _SINGLETON_SOCKET
+    """通过 CreateMutexW 检测单例,返回 True 表示第一个实例"""
+    global _SINGLETON_MUTEX
     try:
-        _SINGLETON_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        _SINGLETON_SOCKET.bind(('127.0.0.1', _SINGLETON_PORT))
-        _SINGLETON_SOCKET.listen(1)
-        return True  # 成功绑定 = 第一个实例
-    except socket.error:
-        return False  # 端口已被占用 = 已有实例运行
-
-
-_am_first = _acquire_singleton()
+        _SINGLETON_MUTEX = _kernel32.CreateMutexW(None, True, _SINGLETON_MUTEX_NAME)
+        last_err = ctypes.get_last_error()
+        # handle 有效且非 ERROR_ALREADY_EXISTS => 本进程成功创建(首个实例)
+        return bool(_SINGLETON_MUTEX) and last_err != _ERROR_ALREADY_EXISTS
+    except Exception:
+        pass
+    return False
 
 
 def _release_singleton():
-    """释放socket(程序退出时调用)"""
-    global _SINGLETON_SOCKET
-    if _SINGLETON_SOCKET:
+    """释放互斥体句柄(程序退出时调用)"""
+    global _SINGLETON_MUTEX
+    if _SINGLETON_MUTEX:
         try:
-            _SINGLETON_SOCKET.close()
+            _kernel32.ReleaseMutex(_SINGLETON_MUTEX)
+            _kernel32.CloseHandle(_SINGLETON_MUTEX)
         except Exception:
             pass
+        _SINGLETON_MUTEX = None
+
+
+_am_first = _acquire_singleton()
 
 
 def main():
