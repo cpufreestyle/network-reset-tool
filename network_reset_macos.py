@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-macOS 网络工具箱 v3.1 - GUI 版本
+macOS 网络工具箱 v3.2 - GUI 版本
 网络重置 + DNS切换 + 网络诊断，保留静态IP设置
 
 ⚠️ 注意: 此脚本需要 sudo 权限运行
@@ -555,7 +555,7 @@ COLORS = {
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("macOS 网络工具箱 v3.1")
+        self.title("macOS 网络工具箱 v3.2")
         self.geometry("720x620")
         self.resizable(True, True)
         self.configure(bg=COLORS["bg"])
@@ -567,7 +567,7 @@ class App(tk.Tk):
         topbar = tk.Frame(self, bg=COLORS["surface"], pady=12)
         topbar.pack(fill="x")
 
-        tk.Label(topbar, text="🍎 网络工具箱 v3.1",
+        tk.Label(topbar, text="🍎 网络工具箱 v3.2",
                  font=("PingFang SC", 18, "bold"), fg=COLORS["text"], bg=COLORS["surface"]).pack()
         tk.Label(topbar, text="网络重置 + DNS切换 + 诊断",
                  font=("PingFang SC", 10), fg=COLORS["subtext"], bg=COLORS["surface"]).pack()

@@ -4,6 +4,18 @@ dist/
 dist_new/
 *.spec
 
+# 二进制产物(发布 exe 走 Gitee Release,不入库)
+*.exe
+
+# 工具/IDE 本地状态
+.dbvs/
+.dbvs-launch.bat
+.codely-cli/
+.idea/
+.vscode/
+*.swp
+*.swo
+
 # Python
 __pycache__/
 *.py[cod]
@@ -12,12 +24,6 @@ __pycache__/
 *.egg-info/
 *.egg
 .eggs/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
 
 # OS
 .DS_Store
@@ -28,8 +34,3 @@ desktop.ini
 *.tmp
 *.bak
 *.log
-
-# Build scripts and artifacts
-build_*.ps1
-python32/
-*-build_*.md
