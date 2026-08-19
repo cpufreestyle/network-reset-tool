@@ -6,8 +6,10 @@ nettoolbox.core - 网络重置与诊断核心逻辑
 """
 
 import ctypes
+import os
 import re
 import subprocess
+import time
 
 
 # ===== DNS 预设配置(按钮颜色由 UI 层映射) =====
@@ -194,6 +196,70 @@ if ($adapters) {
         self.run_cmd('ipconfig /renew', timeout=15)
         self.log("  ✓ DHCP 已刷新")
         return True
+
+    def reset_firewall(self):
+        """重置 Windows 防火墙到默认配置(需管理员)"""
+        self.log("[操作] 重置 Windows 防火墙...")
+        if self.run_cmd('netsh advfirewall reset', timeout=20):
+            self.log("  ✓ 防火墙已重置为默认配置")
+            return True
+        self.log("  ✗ 防火墙重置失败(可能需要管理员权限)")
+        return False
+
+    def backup_hosts(self):
+        """备份系统 hosts 文件到工具目录 hosts_backup/"""
+        self.log("[备份] hosts 文件...")
+        try:
+            src = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'),
+                               r'System32\drivers\etc\hosts')
+            if not os.path.exists(src):
+                self.log("  ✗ 未找到 hosts 文件")
+                return False
+            # 备份到工具目录,带时间戳
+            bak_dir = os.path.join(self._data_dir(), 'hosts_backup')
+            os.makedirs(bak_dir, exist_ok=True)
+            stamp = time.strftime('%Y%m%d_%H%M%S')
+            dst = os.path.join(bak_dir, f'hosts_{stamp}.bak')
+            with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
+                f_out.write(f_in.read())
+            self.log(f"  ✓ hosts 已备份: {dst}")
+            return True
+        except Exception as e:
+            self.log(f"  ✗ hosts 备份失败: {e}")
+            return False
+
+    def restore_hosts(self):
+        """从最近的备份恢复 hosts 文件"""
+        bak_dir = os.path.join(self._data_dir(), 'hosts_backup')
+        if not os.path.isdir(bak_dir):
+            self.log("[恢复] 暂无 hosts 备份")
+            return False
+        baks = sorted(
+            (f for f in os.listdir(bak_dir) if f.startswith('hosts_') and f.endswith('.bak')),
+            reverse=True,
+        )
+        if not baks:
+            self.log("[恢复] 暂无 hosts 备份")
+            return False
+        src = os.path.join(bak_dir, baks[0])
+        dst = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'),
+                           r'System32\drivers\etc\hosts')
+        self.log(f"[恢复] hosts 文件({baks[0]})...")
+        try:
+            with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
+                f_out.write(f_in.read())
+            self.log(f"  ✓ 已恢复: {dst}")
+            return True
+        except Exception as e:
+            self.log(f"  ✗ hosts 恢复失败: {e}")
+            return False
+
+    def _data_dir(self):
+        """工具数据目录(用户 APPDATA 下)"""
+        base = os.environ.get('APPDATA') or os.path.expanduser('~')
+        d = os.path.join(base, 'NetworkResetTool')
+        os.makedirs(d, exist_ok=True)
+        return d
 
     def restore_static_ip(self):
         if not self.static_configs:
@@ -569,4 +635,103 @@ Write-Output ($out -join "`n")
 
         if progress_callback:
             progress_callback(100, "诊断完成")
+        return results
+
+
+# ============================================================
+#  网络测速类
+# ============================================================
+
+class SpeedTest:
+    """简易网络测速:下载测速 + 延迟检测(无需第三方依赖)"""
+
+    # 使用稳定的公共测速文件(Cloudflare / 阿里云 OSS)
+    DOWNLOAD_URLS = [
+        ("Cloudflare", "https://speed.cloudflare.com/__down?bytes=10000000"),
+        ("阿里云",   "https://oss-cn-hangzhou.aliyuncs.com/public/speedtest/10mb.txt"),
+    ]
+
+    def __init__(self, log_callback=None):
+        self.log_callback = log_callback
+
+    def log(self, msg):
+        if self.log_callback:
+            self.log_callback(msg)
+
+    def _download(self, url, timeout=15):
+        """下载指定 URL 并返回 (bytes_downloaded, elapsed_seconds)"""
+        import urllib.request
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'NetworkResetTool-SpeedTest/1.0'
+        })
+        start = time.time()
+        total = 0
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                total += len(chunk)
+                # 超时保护
+                if time.time() - start > timeout:
+                    break
+        elapsed = time.time() - start
+        return total, elapsed
+
+    def run_download_test(self, progress_callback=None):
+        """运行下载测速,返回 list of (source, mbps, mb_downloaded, seconds)"""
+        import urllib.error
+        results = []
+        for i, (name, url) in enumerate(self.DOWNLOAD_URLS):
+            if progress_callback:
+                progress_callback(int(i / len(self.DOWNLOAD_URLS) * 100), f"下载测速: {name}...")
+            self.log(f"[测速] 下载: {name}...")
+            try:
+                total, elapsed = self._download(url)
+                mb = total / (1024 * 1024)
+                mbps = (total * 8) / (elapsed * 1_000_000) if elapsed > 0 else 0
+                results.append((name, round(mbps, 2), round(mb, 2), round(elapsed, 2)))
+                self.log(f"  ✓ {name}: {mbps:.2f} Mbps ({mb:.2f} MB / {elapsed:.2f}s)")
+            except urllib.error.URLError as e:
+                self.log(f"  ✗ {name}: 连接失败 ({e.reason})")
+                results.append((name, 0, 0, 0))
+            except Exception as e:
+                self.log(f"  ✗ {name}: {e}")
+                results.append((name, 0, 0, 0))
+        if progress_callback:
+            progress_callback(100, "测速完成")
+        return results
+
+    def run_latency_test(self):
+        """运行延迟测试(Ping 多个目标),返回 list of (target, avg_ms)"""
+        import socket
+        targets = [
+            ("223.5.5.5",   "阿里 DNS"),
+            ("8.8.8.8",     "Google DNS"),
+            ("1.1.1.1",     "Cloudflare"),
+        ]
+        results = []
+        for ip, label in targets:
+            self.log(f"[测速] 延迟: {label} ({ip})...")
+            latencies = []
+            ok = False
+            for _ in range(3):
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(3)
+                    start = time.time()
+                    s.connect((ip, 53))
+                    elapsed = (time.time() - start) * 1000
+                    latencies.append(elapsed)
+                    s.close()
+                    ok = True
+                except Exception:
+                    pass
+            if ok:
+                avg = round(sum(latencies) / len(latencies), 1)
+                results.append((label, avg))
+                self.log(f"  ✓ {label}: {avg}ms")
+            else:
+                results.append((label, None))
+                self.log(f"  ✗ {label}: 超时")
         return results

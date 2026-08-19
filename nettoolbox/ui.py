@@ -114,6 +114,8 @@ class ResetPanel(tk.Frame):
         self._make_btn(row2, "🔄 刷新 DHCP",   self._do_dhcp,   COLORS["pink"]).pack(side="left", expand=True, fill="x", padx=3)
         self._make_btn(row2, "💾 备份IP",      self._do_backup, COLORS["yellow"]).pack(side="left", expand=True, fill="x", padx=3)
         self._make_btn(row3, "📥 还原IP",      self._do_restore, COLORS["sky"]).pack(side="left", expand=True, fill="x", padx=3)
+        self._make_btn(row3, "🧯 重置防火墙",  self._do_firewall, COLORS["orange"]).pack(side="left", expand=True, fill="x", padx=3)
+        self._make_btn(row3, "📄 备份Hosts",   self._do_hosts_bak, COLORS["teal"]).pack(side="left", expand=True, fill="x", padx=3)
 
         # ===== DNS 一键切换 =====
         tk.Frame(btn_area, bg=COLORS["surface2"], height=1).pack(fill="x", pady=(8, 3))
@@ -427,6 +429,34 @@ class ResetPanel(tk.Frame):
         tool.restore_static_ip()
         self.after(0, functools.partial(self._finish, "✅ IP 配置已还原"))
 
+    # ----- 单独操作: 防火墙 / Hosts -----
+    def _do_firewall(self):
+        if self._running: return
+        if not messagebox.askyesno("确认", "将重置 Windows 防火墙到默认配置。\n\n"
+                                   "会清除所有自定义防火墙规则(入站/出站)。\n确定要继续吗?"):
+            return
+        self._set_running(True, "重置防火墙")
+        threading.Thread(target=self._thread_firewall, daemon=True).start()
+
+    def _thread_firewall(self):
+        ok = self._make_tool().reset_firewall()
+        self.after(0, functools.partial(self._finish,
+                                        "✅ 防火墙已重置" if ok else "❌ 防火墙重置失败",
+                                        "✅ 防火墙已重置" if ok else "❌ 防火墙重置失败",
+                                        ok))
+
+    def _do_hosts_bak(self):
+        if self._running: return
+        self._set_running(True, "备份 Hosts")
+        threading.Thread(target=self._thread_hosts_bak, daemon=True).start()
+
+    def _thread_hosts_bak(self):
+        ok = self._make_tool().backup_hosts()
+        self.after(0, functools.partial(self._finish,
+                                        "✅ hosts 已备份" if ok else "❌ hosts 备份失败",
+                                        "✅ hosts 已备份" if ok else "❌ hosts 备份失败",
+                                        ok))
+
     # ----- 一键重置 -----
     def _do_all_reset(self):
         if self._running: return
@@ -506,6 +536,10 @@ class DiagnosticPanel(tk.Frame):
                                      COLORS["teal"], font_size=11)
         self.btn_health.pack(side="left", padx=4)
 
+        self.btn_speed = styled_btn(ctrl, "⚡ 网络测速", self._do_speed_test,
+                                    COLORS["green"], font_size=11)
+        self.btn_speed.pack(side="left", padx=4)
+
         # 自定义 Ping 输入
         self.custom_target = tk.StringVar(value="www.baidu.com")
         tk.Entry(ctrl, textvariable=self.custom_target, font=("Consolas", 10),
@@ -570,7 +604,8 @@ class DiagnosticPanel(tk.Frame):
         state = "disabled" if running else "normal"
         # 修复: 自定义 Ping 按钮此前未加入禁用列表
         for btn in [self.btn_all_diag, self.btn_quick, self.btn_overview,
-                    self.btn_traceroute, self.btn_health, self.btn_custom_ping]:
+                    self.btn_traceroute, self.btn_health, self.btn_custom_ping,
+                    self.btn_speed]:
             btn.config(state=state)
         if running:
             self.diag_progress.start(8)
@@ -852,6 +887,81 @@ class DiagnosticPanel(tk.Frame):
         self._set_running(False)
         self.diag_progress.configure(value=100)
         self._set_diag_status("✅ 完整诊断完成", COLORS["green"])
+
+    # ---- 网络测速 ----
+    def _do_speed_test(self):
+        if self._running: return
+        self._set_running(True)
+        self.diag_progress.configure(mode="determinate")
+        self.diag_progress["value"] = 0
+        self._set_diag_status("⚡ 测速中...", COLORS["green"])
+        threading.Thread(target=self._thread_speed_test, daemon=True).start()
+
+    def _thread_speed_test(self):
+        from .core import SpeedTest
+
+        def progress(pct, msg):
+            self.after(0, lambda p=pct: self.diag_progress.configure(value=p))
+            self.after(0, lambda m=msg: self._set_diag_status(f"⏳ {m}", COLORS["blue"]))
+
+        def log_cb(msg):
+            self.after(0, lambda m=msg: self._set_diag_status(m, COLORS["subtext"]))
+
+        st = SpeedTest(log_callback=log_cb)
+        download_results = st.run_download_test(progress_callback=progress)
+        latency_results = st.run_latency_test()
+        self.after(0, self._render_speed_test, download_results, latency_results)
+
+    def _render_speed_test(self, download_results, latency_results):
+        CARD_BG = "#2a2a3e"
+        self._clear_results()
+
+        # 下载测速卡片
+        row0 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row0.pack(fill="x", pady=4, padx=4)
+        card0 = self._card(row0, "⚡ 下载测速", bg=CARD_BG)
+
+        best_name = None
+        best_mbps = 0
+        for name, mbps, mb_down, seconds in download_results:
+            color = COLORS["green"] if mbps >= 50 else COLORS["yellow"] if mbps >= 10 else COLORS["red"]
+            self._result_info(card0, f"{name}: {mbps} Mbps ({mb_down} MB / {seconds}s)")
+            if mbps > best_mbps:
+                best_mbps = mbps
+                best_name = name
+
+        if best_name:
+            self._result_ok(card0, f"最快: {best_name}", f"{best_mbps} Mbps")
+
+        # 延迟卡片
+        row1 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row1.pack(fill="x", pady=4, padx=4)
+        card1 = self._card(row1, "📡 延迟测试", bg=CARD_BG)
+
+        for label, avg_ms in latency_results:
+            if avg_ms is not None:
+                color = COLORS["green"] if avg_ms < 50 else COLORS["yellow"] if avg_ms < 150 else COLORS["red"]
+                self._result_ok(card1, f"{label}", f"平均延迟 {avg_ms}ms")
+            else:
+                self._result_fail(card1, f"{label}", "连接超时")
+
+        # 结论
+        row2 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row2.pack(fill="x", pady=4, padx=4)
+        card2 = self._card(row2, "💡 测速结论", bg=CARD_BG)
+
+        if best_mbps >= 50:
+            self._result_ok(card2, "网速很快", f"最快 {best_mbps} Mbps,适合高清视频/大文件下载")
+        elif best_mbps >= 10:
+            self._result_ok(card2, "网速正常", f"最快 {best_mbps} Mbps,日常使用无压力")
+        elif best_mbps > 0:
+            self._result_fail(card2, "网速较慢", f"最快 {best_mbps} Mbps,建议检查网络或更换 DNS")
+        else:
+            self._result_fail(card2, "测速失败", "所有测速节点均无法连接,请检查网络")
+
+        self._set_running(False)
+        self.diag_progress.configure(value=100)
+        self._set_diag_status("✅ 测速完成", COLORS["green"])
 
     # ---- 健康报告 ----
     def _do_health_report(self):

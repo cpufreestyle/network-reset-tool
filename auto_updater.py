@@ -237,6 +237,7 @@ class AutoUpdater:
             current_exe = os.path.abspath(sys.argv[0])
 
         # 生成更新脚本
+        restart_line = f'start "" "{current_exe}"' if not self.silent else ''
         update_script = f'''@echo off
 echo 正在更新 {self.app_name}...
 timeout /t 2 /nobreak >nul
@@ -250,7 +251,7 @@ if not errorlevel 1 (
 
 copy /y "{new_exe}" "{current_exe}" >nul 2>&1
 echo 更新完成！
-{"start \"\" \"" + current_exe + "\"" if not self.silent else ""}
+{restart_line}
 rmdir /s /q "{self._download_dir}" >nul 2>&1
 '''
 

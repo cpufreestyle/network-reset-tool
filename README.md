@@ -1,4 +1,4 @@
-﻿# 网络工具箱 v3.2
+﻿# 网络工具箱 v3.3
 
 
 
@@ -20,7 +20,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.6%2B-green.svg)]()
 
-[![Version](https://img.shields.io/badge/Version-v3.2-orange.svg)]()
+[![Version](https://img.shields.io/badge/Version-v3.3-orange.svg)]()
 
 
 
@@ -70,7 +70,7 @@
 
 
 
-| v3.2 | Windows | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases) | GUI 图形界面版（免安装） |
+| v3.3 | Windows | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases) | GUI 图形界面版（免安装） |
 
 
 
@@ -85,6 +85,30 @@
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 
 
+
+## 新功能 (v3.3)
+
+### 新增：网络测速
+
+- **下载测速**：多节点下载测速（Cloudflare / 阿里云），显示 Mbps、下载量、耗时
+- **延迟测试**：TCP 连接延迟检测（阿里 / Google / Cloudflare DNS）
+- **测速结论**：自动评级（快/正常/慢），给出建议
+- 无需第三方依赖，纯 Python 标准库实现
+
+### 新增：自动更新
+
+- 启动后后台检查 Gitee Release 新版本（2 秒延迟，不影响启动速度）
+- 发现新版本时弹窗提示，展示更新日志
+- 一键下载更新并自动安装重启
+- 24 小时内不重复检查，静默失败不影响正常使用
+
+### 新增：扩展重置项
+
+- **重置防火墙**：一键重置 Windows 防火墙到默认配置（清除自定义规则）
+- **Hosts 备份**：备份系统 hosts 文件到用户目录，带时间戳
+- **Hosts 恢复**：从最近备份恢复 hosts 文件
+
+---
 
 ## 新功能 (v3.2)
 
