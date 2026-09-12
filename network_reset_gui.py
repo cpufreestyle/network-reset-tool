@@ -1396,7 +1396,6 @@ class ProxyRepairTool:
             else:
                 result['suggestions'].append(
                     f"发现 Clash 核心在端口 {core['port']} 运行({core['process']}),可把系统代理指向它")
-        cfg_dir = self.find_clash_config_dir()
         if cfg_dir:
             dns_on = self.read_clash_dns_enabled(cfg_dir)
             result['clash_dns'] = dns_on
@@ -1431,6 +1430,7 @@ class ProxyRepairTool:
         ports = self.parse_proxy_server(server)
         alive = any(self.is_port_open(h, p) for _, h, p in ports) if ports else False
         core = self.find_clash_core()
+        # 配置目录探测一次即可（内部会遍历多个候选路径）
         cfg_dir = self.find_clash_config_dir()
         target_port = self.read_clash_mixed_port(cfg_dir) if cfg_dir else None
         if target_port is None and core:
@@ -1448,7 +1448,6 @@ class ProxyRepairTool:
             else:
                 ok = False
         # 2) Clash DNS 关闭 -> 开启并重启
-        cfg_dir = self.find_clash_config_dir()
         if cfg_dir:
             dns_on = self.read_clash_dns_enabled(cfg_dir)
             if dns_on is False:
@@ -1464,7 +1463,6 @@ class ProxyRepairTool:
                 else:
                     actions.append("Clash DNS 无需修改")
         # 3) Clash 当前选中的节点已失效(delay=0) -> 自动切到自动选择组
-        cfg_dir = self.find_clash_config_dir()
         if cfg_dir:
             port, secret = self.read_clash_controller(cfg_dir)
             if port:
@@ -1876,10 +1874,6 @@ if ($adapter) { Write-Output $adapter.NetConnectionID }
             self._set_status("✅ 操作完成", COLORS["green"])
             self.progress.stop()
 
-    def _thread_log(self, tool):
-        for msg in []:
-            self.after(0, lambda m=msg: self._log(m))
-
     # ----- 单独操作 -----
     def _do_winsock(self):
         if self._running: return
@@ -2169,32 +2163,37 @@ class DiagnosticPanel(tk.Frame):
         threading.Thread(target=self._thread_quick_ping, daemon=True).start()
 
     def _thread_quick_ping(self):
+        """仅采集数据，UI 渲染统一交给主线程（Tkinter 非线程安全）"""
         diag = NetworkDiagnostic()
-        self.after(0, self._clear_results)
+        results = []
+        for target, label, color_name in NetworkDiagnostic.PING_TARGETS:
+            ok, avg_ms, loss, _ = diag.ping(target)
+            results.append({'target': target, 'label': label,
+                            'ok': ok, 'avg_ms': avg_ms, 'loss': loss})
+        all_ok = all(r['ok'] for r in results)
+        self.after(0, lambda: self._render_quick_ping(results, all_ok))
+
+    def _render_quick_ping(self, results, all_ok):
+        self._clear_results()
         row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row.pack(fill="x", pady=4, padx=4)
         card = self._card(row, "📡 Ping 连通性测试")
-
-        all_ok = True
-        for target, label, color_name in NetworkDiagnostic.PING_TARGETS:
-            ok, avg_ms, loss, _ = diag.ping(target)
+        for r in results:
             # 捕获 avg_ms=None 边界情况
-            latency_str = f"{avg_ms}ms" if avg_ms is not None else "<1ms"
-            if ok:
-                self.after(0, lambda r=card, t=label, m=latency_str, l=loss, tgt=target:
-                           self._result_ok(r, f"{t} ({tgt})", f"延迟 {m} · 丢包 {l}%"))
+            latency_str = f"{r['avg_ms']}ms" if r['avg_ms'] is not None else "<1ms"
+            if r['ok']:
+                self._result_ok(card, f"{r['label']} ({r['target']})",
+                                f"延迟 {latency_str} · 丢包 {r['loss']}%")
             else:
-                all_ok = False
-                self.after(0, lambda r=card, t=label, l=loss, tgt=target:
-                           self._result_fail(r, f"{t} ({tgt})", f"丢包率 {l}%"))
-
-        self.after(0, lambda: self._set_running(False))
+                self._result_fail(card, f"{r['label']} ({r['target']})",
+                                  f"丢包率 {r['loss']}%")
+        self._set_running(False)
         self.diag_progress.stop()
         self.diag_progress.configure(mode="determinate")
         if all_ok:
-            self.after(0, lambda: self._set_diag_status("✅ 所有目标 Ping 正常", COLORS["green"]))
+            self._set_diag_status("✅ 所有目标 Ping 正常", COLORS["green"])
         else:
-            self.after(0, lambda: self._set_diag_status("⚠ 部分目标连接异常,可尝试网络重置", COLORS["yellow"]))
+            self._set_diag_status("⚠ 部分目标连接异常,可尝试网络重置", COLORS["yellow"])
 
     # ---- 网络总览 ----
     def _do_overview(self):
@@ -2205,10 +2204,13 @@ class DiagnosticPanel(tk.Frame):
         threading.Thread(target=self._thread_overview, daemon=True).start()
 
     def _thread_overview(self):
+        """仅采集数据，UI 渲染交给主线程"""
         diag = NetworkDiagnostic()
         overview = diag.get_overview()
+        self.after(0, lambda: self._render_overview(overview))
 
-        self.after(0, self._clear_results)
+    def _render_overview(self, overview):
+        self._clear_results()
         row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row.pack(fill="x", pady=4, padx=4)
         card = self._card(row, "📋 网络状态总览")
@@ -2227,13 +2229,12 @@ class DiagnosticPanel(tk.Frame):
             for k, v in overview:
                 if k in label_map:
                     label, _ = label_map[k]
-                    self.after(0, lambda r=card, lbl=label, val=v:
-                               self._result_info(r, f"{lbl}:{val}"))
+                    self._result_info(card, f"{label}:{v}")
         else:
-            self.after(0, lambda r=card: self._result_fail(r, "无法获取网络信息"))
+            self._result_fail(card, "无法获取网络信息")
 
-        self.after(0, lambda: self._set_running(False))
-        self.after(0, lambda: self._set_diag_status("✅ 网络总览完成", COLORS["green"]))
+        self._set_running(False)
+        self._set_diag_status("✅ 网络总览完成", COLORS["green"])
 
     # ---- Traceroute ----
     def _do_traceroute(self):
@@ -2248,10 +2249,13 @@ class DiagnosticPanel(tk.Frame):
         threading.Thread(target=self._thread_traceroute, args=(target,), daemon=True).start()
 
     def _thread_traceroute(self, target):
+        """仅采集数据，UI 渲染交给主线程"""
         diag = NetworkDiagnostic()
         output = diag.traceroute(target)
+        self.after(0, lambda: self._render_traceroute(target, output))
 
-        self.after(0, self._clear_results)
+    def _render_traceroute(self, target, output):
+        self._clear_results()
         row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row.pack(fill="both", expand=True, pady=4, padx=4)
         card = self._card(row, f"🛤️ 路由追踪: {target}")
@@ -2274,8 +2278,8 @@ class DiagnosticPanel(tk.Frame):
                               relief="flat", cursor="hand2", command=copy_trace)
         btn_copy.pack(anchor="e", padx=10, pady=4)
 
-        self.after(0, lambda: self._set_running(False))
-        self.after(0, lambda: self._set_diag_status(f"✅ 追踪完成", COLORS["green"]))
+        self._set_running(False)
+        self._set_diag_status("✅ 追踪完成", COLORS["green"])
 
     # ---- 自定义 Ping ----
     def _do_custom_ping(self):
@@ -2292,21 +2296,22 @@ class DiagnosticPanel(tk.Frame):
         threading.Thread(target=self._thread_custom_ping, args=(target,), daemon=True).start()
 
     def _thread_custom_ping(self, target):
+        """仅采集数据，UI 渲染交给主线程"""
         diag = NetworkDiagnostic()
         ok, avg_ms, loss, output = diag.ping(target, count=4)
+        self.after(0, lambda: self._render_custom_ping(target, ok, avg_ms, loss, output))
 
-        self.after(0, self._clear_results)
+    def _render_custom_ping(self, target, ok, avg_ms, loss, output):
+        self._clear_results()
         row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row.pack(fill="both", expand=True, pady=4, padx=4)
         card = self._card(row, f"📡 Ping: {target}")
 
         latency_str = f"{avg_ms}ms" if avg_ms is not None else "<1ms"
         if ok:
-            self.after(0, lambda r=card, m=latency_str, l=loss:
-                       self._result_ok(r, f"连接正常", f"延迟 {m} · 丢包率 {l}%"))
+            self._result_ok(card, "连接正常", f"延迟 {latency_str} · 丢包率 {loss}%")
         else:
-            self.after(0, lambda r=card, l=loss:
-                       self._result_fail(r, f"连接失败", f"丢包率 {l}%"))
+            self._result_fail(card, "连接失败", f"丢包率 {loss}%")
 
         # 原始输出
         raw = tk.Text(card, font=(FONT_MONO, 9), bg=COLORS["bg2"],
@@ -2316,7 +2321,7 @@ class DiagnosticPanel(tk.Frame):
         raw.insert("1.0", output)
         raw.configure(state="disabled")
 
-        self.after(0, lambda: self._set_running(False))
+        self._set_running(False)
         self.diag_progress.stop()
         self.diag_progress.configure(mode="determinate")
 
@@ -2346,8 +2351,10 @@ class DiagnosticPanel(tk.Frame):
             return
 
         self._latest_results = results
+        self.after(0, lambda: self._render_full_diagnostic(results))
 
-        self.after(0, self._clear_results)
+    def _render_full_diagnostic(self, results):
+        self._clear_results()
 
         # ---- 网络总览卡片 ----
         row0 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
@@ -2356,9 +2363,9 @@ class DiagnosticPanel(tk.Frame):
         overview = results.get('overview', [])
         if overview:
             for k, v in overview:
-                self.after(0, lambda r=card0, kk=k, vv=v: self._result_info(r, f"{kk}:{vv}"))
+                self._result_info(card0, f"{k}:{v}")
         else:
-            self.after(0, lambda r=card0: self._result_fail(r, "无法获取网络信息"))
+            self._result_fail(card0, "无法获取网络信息")
 
         # ---- Ping 卡片 ----
         row1 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
@@ -2366,16 +2373,13 @@ class DiagnosticPanel(tk.Frame):
         card1 = self._card(row1, "📡 Ping 连通性测试", bg="#2a2a3e")
         ping_results = results.get('ping', [])
         for p in ping_results:
-            color = COLORS[p['color']]
             latency_str = f"{p['avg_ms']}ms" if p['avg_ms'] is not None else "<1ms"
             if p['ok']:
-                self.after(0, lambda r=card1, lbl=p['label'], tgt=p['target'], m=latency_str, los=p['loss']:
-                           self._result_ok(r, f"{lbl} ({tgt})",
-                                          f"延迟 {m} · 丢包 {los}%"))
+                self._result_ok(card1, f"{p['label']} ({p['target']})",
+                                f"延迟 {latency_str} · 丢包 {p['loss']}%")
             else:
-                self.after(0, lambda r=card1, lbl=p['label'], tgt=p['target'], los=p['loss']:
-                           self._result_fail(r, f"{lbl} ({tgt})",
-                                             f"丢包率 {los}%"))
+                self._result_fail(card1, f"{p['label']} ({p['target']})",
+                                  f"丢包率 {p['loss']}%")
 
         # ---- DNS 卡片 ----
         row2 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
@@ -2384,12 +2388,10 @@ class DiagnosticPanel(tk.Frame):
         dns_results = results.get('dns', [])
         for d in dns_results:
             if d['ok']:
-                self.after(0, lambda r=card2, lbl=d['label'], dns=d['dns'], ip=d['ip']:
-                           self._result_ok(r, f"{lbl} ({dns})",
-                                          f"解析成功 → {ip}"))
+                self._result_ok(card2, f"{d['label']} ({d['dns']})",
+                                f"解析成功 → {d['ip']}")
             else:
-                self.after(0, lambda r=card2, lbl=d['label'], dns=d['dns']:
-                           self._result_fail(r, f"{lbl} ({dns})", "解析失败"))
+                self._result_fail(card2, f"{d['label']} ({d['dns']})", "解析失败")
 
         # ---- 结论 ----
         row3 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
@@ -2400,18 +2402,15 @@ class DiagnosticPanel(tk.Frame):
         all_dns_ok = all(d['ok'] for d in dns_results)
 
         if all_ping_ok and all_dns_ok:
-            self.after(0, lambda r=card3:
-                       self._result_ok(r, "网络状态正常", "所有目标连通,DNS 解析正常"))
+            self._result_ok(card3, "网络状态正常", "所有目标连通,DNS 解析正常")
         elif all_ping_ok and not all_dns_ok:
-            self.after(0, lambda r=card3:
-                       self._result_fail(r, "DNS 异常", "Ping 正常但 DNS 解析失败,尝试清除 DNS 缓存"))
+            self._result_fail(card3, "DNS 异常", "Ping 正常但 DNS 解析失败,尝试清除 DNS 缓存")
         else:
-            self.after(0, lambda r=card3:
-                       self._result_fail(r, "网络连接异常", "部分目标不可达,建议使用「网络重置」标签修复"))
+            self._result_fail(card3, "网络连接异常", "部分目标不可达,建议使用「网络重置」标签修复")
 
-        self.after(0, lambda: self._set_running(False))
-        self.after(0, lambda: self.diag_progress.configure(value=100))
-        self.after(0, lambda: self._set_diag_status("✅ 完整诊断完成", COLORS["green"]))
+        self._set_running(False)
+        self.diag_progress.configure(value=100)
+        self._set_diag_status("✅ 完整诊断完成", COLORS["green"])
 
     # ---- 健康报告 ----
     def _do_health_report(self):
@@ -2476,6 +2475,43 @@ class DiagnosticPanel(tk.Frame):
         # 丢包率
         avg_loss = round(sum(p['loss'] for p in ping_results) / len(ping_results), 1) if ping_results else 100
 
+        # 等级说明
+        if total >= 90:
+            advice_text = "网络状态优秀,所有检测通过,继续保持。"
+        elif total >= 70:
+            advice_text = "网络状态良好,个别指标待优化,可尝试 DNS 一键切换。"
+        elif total >= 50:
+            advice_text = "网络状态一般,建议执行「网络重置」修复潜在问题。"
+        else:
+            advice_text = "网络状态较差,建议立即执行「一键重置全部」修复网络。"
+
+        # DNS 服务器显示值
+        dns_svr = next((v for k, v in overview if 'DNS' in k), "-")
+
+        # 纯数据计算完成，渲染交给主线程（Tkinter 非线程安全）
+        stats = {
+            'total': total, 'grade': grade, 'grade_color': grade_color,
+            'ping_ok': ping_ok, 'ping_total': len(ping_results),
+            'dns_ok': dns_ok, 'dns_total': len(dns_results),
+            'conn_pct': f"{round(ping_ok / max(len(ping_results), 1) * 100)}%",
+            'dns_pct': f"{round(dns_ok / max(len(dns_results), 1) * 100)}%",
+            'cfg_pct': f"{round(cfg_score / 30 * 100)}%",
+            'avg_latency': avg_latency, 'avg_loss': avg_loss,
+            'dns_svr': dns_svr[:20] if len(dns_svr) > 20 else dns_svr,
+            'advice_text': advice_text,
+        }
+        self.after(0, lambda: self._render_health_report(stats))
+
+    def _render_health_report(self, s):
+        """健康报告 UI 渲染（仅在主线程执行）"""
+        total = s['total']
+        grade, grade_color = s['grade'], s['grade_color']
+        conn_pct, dns_pct, cfg_pct = s['conn_pct'], s['dns_pct'], s['cfg_pct']
+        avg_latency, avg_loss = s['avg_latency'], s['avg_loss']
+        advice_text = s['advice_text']
+
+        self._clear_results()
+
         # 渲染卡片
         def rc(parent, icon, title, value, sub=None, color=None):
             card = self._card(parent, icon + " " + title, bg="#2a2a3e")
@@ -2513,14 +2549,6 @@ class DiagnosticPanel(tk.Frame):
         advice_card.pack(side="right", fill="both", expand=True, padx=(4, 0))
         tk.Label(advice_card, text="💡 健康建议", font=(FONT_FAMILY, 10, "bold"),
                  fg=COLORS["text"], bg="#2a2a3e").pack(anchor="w", padx=10, pady=(8, 2))
-        if total >= 90:
-            advice_text = "网络状态优秀,所有检测通过,继续保持。"
-        elif total >= 70:
-            advice_text = "网络状态良好,个别指标待优化,可尝试 DNS 一键切换。"
-        elif total >= 50:
-            advice_text = "网络状态一般,建议执行「网络重置」修复潜在问题。"
-        else:
-            advice_text = "网络状态较差,建议立即执行「一键重置全部」修复网络。"
         tk.Label(advice_card, text=advice_text, font=(FONT_FAMILY, 9),
                  fg=COLORS["subtext"], bg="#2a2a3e", wraplength=200,
                  justify="left", anchor="w").pack(anchor="w", padx=10, pady=(0, 8))
@@ -2528,11 +2556,8 @@ class DiagnosticPanel(tk.Frame):
         # 维度卡片行
         row1 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
         row1.pack(fill="x", pady=4, padx=4)
-        conn_pct = f"{round(ping_ok / max(len(ping_results), 1) * 100)}%"
-        dns_pct = f"{round(dns_ok / max(len(dns_results), 1) * 100)}%"
-        cfg_pct = f"{round(cfg_score / 30 * 100)}%"
-        rc(row1, "📡", "连通性", conn_pct, f"{ping_ok}/{len(ping_results)} 目标可达")
-        rc(row1, "🔍", "DNS可用", dns_pct, f"{dns_ok}/{len(dns_results)} DNS正常")
+        rc(row1, "📡", "连通性", conn_pct, f"{s['ping_ok']}/{s['ping_total']} 目标可达")
+        rc(row1, "🔍", "DNS可用", dns_pct, f"{s['dns_ok']}/{s['dns_total']} DNS正常")
         rc(row1, "🔧", "配置完整", cfg_pct, "IP/网关/DNS状态")
 
         # 性能行
@@ -2543,14 +2568,13 @@ class DiagnosticPanel(tk.Frame):
         rc(row2, "📉", "平均丢包", f"{avg_loss}%", "5个目标平均",
            COLORS["green"] if avg_loss == 0 else COLORS["yellow"] if avg_loss < 20 else COLORS["red"])
         # DNS服务器
-        dns_svr = next((v for k, v in overview if 'DNS' in k), "-")
-        rc(row2, "🌐", "当前DNS", dns_svr[:20] if len(dns_svr) > 20 else dns_svr, "当前使用")
+        rc(row2, "🌐", "当前DNS", s['dns_svr'], "当前使用")
 
-        self.after(0, lambda: self._set_running(False))
-        self.after(0, lambda: self.diag_progress.configure(value=100))
-        self.after(0, lambda: self._set_diag_status(
+        self._set_running(False)
+        self.diag_progress.configure(value=100)
+        self._set_diag_status(
             f"📊 健康报告: {total}分 {grade} | {advice_text[:20]}...",
-            grade_color))
+            grade_color)
 
 
 # ============================================================
@@ -2671,61 +2695,64 @@ class ProxyPanel(tk.Frame):
         threading.Thread(target=self._thread_diagnose, daemon=True).start()
 
     def _thread_diagnose(self):
+        """仅采集数据，UI 渲染交给主线程（Tkinter 非线程安全）"""
         res = ProxyRepairTool().diagnose()
-        self.after(0, self._clear_results)
+        self.after(0, lambda: self._render_diagnose(res))
 
-        row = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row.pack(fill="x", pady=4, padx=4)
+    def _render_diagnose(self, res):
+        self._clear_results()
+
+        row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row.pack(fill="x", pady=4, padx=4)
         card = self._card(row, "🔌 系统代理", bg="#2a2a3e")
         if res['proxy_enabled']:
             srv = res['proxy_server'] or "(空)"
+            self._result_info(card, f"已启用,地址: {srv}")
         else:
-            srv = None
-        if res['proxy_enabled']:
-            self.after(0, lambda r=card, s=srv: self._result_info(r, f"已启用,地址: {s}"))
-        else:
-            self.after(0, lambda r=card: self._result_info(r, "未启用系统代理"))
+            self._result_info(card, "未启用系统代理")
         if res['proxy_ports']:
             if res['proxy_alive']:
-                self.after(0, lambda r=card: self._result_ok(r, "代理端口可连通", "外网出口正常"))
+                self._result_ok(card, "代理端口可连通", "外网出口正常")
             else:
-                self.after(0, lambda r=card: self._result_fail(r, "代理端口无服务监听", "外网会全部失败!"))
+                self._result_fail(card, "代理端口无服务监听", "外网会全部失败!")
 
-        row2 = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row2.pack(fill="x", pady=4, padx=4)
+        row2 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row2.pack(fill="x", pady=4, padx=4)
         card2 = self._card(row2, "🛡️ 代理核心", bg="#2a2a3e")
         core = res['clash_core']
         if core:
             pp = res.get('clash_proxy_port')
             if pp:
-                self.after(0, lambda r=card2, c=core, p=pp:
-                           self._result_ok(r, f"发现 {c['process']} (代理端口 {p})"))
+                self._result_ok(card2, f"发现 {core['process']} (代理端口 {pp})")
             else:
-                self.after(0, lambda r=card2, c=core:
-                           self._result_ok(r, f"发现 {c['process']} 在端口 {c['port']} 运行"))
+                self._result_ok(card2, f"发现 {core['process']} 在端口 {core['port']} 运行")
         else:
-            self.after(0, lambda r=card2: self._result_info(r, "未发现 Clash/mihomo 核心"))
+            self._result_info(card2, "未发现 Clash/mihomo 核心")
 
-        row3 = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row3.pack(fill="x", pady=4, padx=4)
+        row3 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row3.pack(fill="x", pady=4, padx=4)
         card3 = self._card(row3, "🌐 Clash DNS", bg="#2a2a3e")
         dns = res['clash_dns']
         if dns is True:
-            self.after(0, lambda r=card3: self._result_ok(r, "dns.enable = true", "DNS 模块正常"))
+            self._result_ok(card3, "dns.enable = true", "DNS 模块正常")
         elif dns is False:
-            self.after(0, lambda r=card3: self._result_fail(r, "dns.enable = false", "fake-ip 模式下会导致解析超时!"))
+            self._result_fail(card3, "dns.enable = false", "fake-ip 模式下会导致解析超时!")
         else:
-            self.after(0, lambda r=card3: self._result_info(r, "未找到 Clash 配置,无法检测"))
+            self._result_info(card3, "未找到 Clash 配置,无法检测")
 
-        row4 = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row4.pack(fill="x", pady=4, padx=4)
+        row4 = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row4.pack(fill="x", pady=4, padx=4)
         card4 = self._card(row4, "💡 诊断结论", bg="#2a2a3e")
         if res['issues']:
             for issue in res['issues']:
-                self.after(0, lambda r=card4, t=issue: self._result_fail(r, t))
-            self.after(0, lambda r=card4: self._result_info(r, "建议点击「一键修复」自动处理"))
-            self.after(0, lambda: self._set_status("⚠ 发现代理问题,可一键修复", COLORS["yellow"]))
+                self._result_fail(card4, issue)
+            self._result_info(card4, "建议点击「一键修复」自动处理")
+            self._set_status("⚠ 发现代理问题,可一键修复", COLORS["yellow"])
         else:
-            self.after(0, lambda r=card4: self._result_ok(r, "未发现明显代理问题"))
-            self.after(0, lambda: self._set_status("✅ 代理诊断正常", COLORS["green"]))
+            self._result_ok(card4, "未发现明显代理问题")
+            self._set_status("✅ 代理诊断正常", COLORS["green"])
 
-        self.after(0, lambda: self._set_running(False))
+        self._set_running(False)
 
     # ---- 修复 ----
     def _do_repair(self):
@@ -2737,22 +2764,27 @@ class ProxyPanel(tk.Frame):
         threading.Thread(target=self._thread_repair, daemon=True).start()
 
     def _thread_repair(self):
+        """仅执行修复（耗时操作），UI 渲染交给主线程"""
         tool = ProxyRepairTool(log_callback=self._safe_log)
         ok, actions = tool.repair()
-        self.after(0, self._clear_results)
-        row = tk.Frame(self.results_inner, bg=COLORS["bg2"]); row.pack(fill="x", pady=4, padx=4)
+        self.after(0, lambda: self._render_repair(ok, actions))
+
+    def _render_repair(self, ok, actions):
+        self._clear_results()
+        row = tk.Frame(self.results_inner, bg=COLORS["bg2"])
+        row.pack(fill="x", pady=4, padx=4)
         card = self._card(row, "🔧 修复结果", bg="#2a2a3e")
         if not actions:
-            self.after(0, lambda r=card: self._result_info(r, "无需修复,或请先点「诊断代理」"))
+            self._result_info(card, "无需修复,或请先点「诊断代理」")
         for a in actions:
-            self.after(0, lambda r=card, t=a: self._result_info(r, "• " + t))
+            self._result_info(card, "• " + a)
         if ok:
-            self.after(0, lambda r=card: self._result_ok(r, "修复完成!", "建议重开浏览器/相关程序使代理生效"))
-            self.after(0, lambda: self._set_status("✅ 代理修复完成", COLORS["green"]))
+            self._result_ok(card, "修复完成!", "建议重开浏览器/相关程序使代理生效")
+            self._set_status("✅ 代理修复完成", COLORS["green"])
         else:
-            self.after(0, lambda r=card: self._result_fail(r, "部分修复失败", "请查看上方信息/手动处理"))
-            self.after(0, lambda: self._set_status("⚠ 修复未完全成功", COLORS["yellow"]))
-        self.after(0, lambda: self._set_running(False))
+            self._result_fail(card, "部分修复失败", "请查看上方信息/手动处理")
+            self._set_status("⚠ 修复未完全成功", COLORS["yellow"])
+        self._set_running(False)
 
     def _safe_log(self, msg, color=None):
         self.after(0, lambda m=msg: self._set_status("修复中: " + m[:60], COLORS["orange"]))
@@ -2837,10 +2869,6 @@ class App(tk.Tk):
                             command=lambda t=tid: self._switch_tab(t))
             btn.pack(side="left", padx=(0, 2))
             self.tab_buttons[tid] = btn
-
-        self._indicator = tk.Frame(tabbar, bg=COLORS["green"], height=2)
-        self._indicator.pack(fill="x", padx=15)
-        self._indicator.pack_forget()  # hide, use button style instead
 
         self.tab_buttons[self._active_tab].config(
             bg=COLORS["surface"], fg=COLORS["green"])
