@@ -1,17 +1,39 @@
 #!/usr/bin/env python3
-"""Upload network_first_aid_kit.exe to Gitee Release v3.0"""
-import urllib.request, urllib.parse, json, os, sys
+"""Upload dist/网络工具箱.exe to Gitee Release.
 
-TOKEN = '8598175f28d65359a5ad1c41180e6920'
+用法:
+    GITEE_TOKEN=<your token> python gitee_upload.py [exe_path] [release_id]
+
+参数:
+    exe_path   默认 dist/网络工具箱.exe（相对本脚本所在目录）
+    release_id 默认 679537
+"""
+import os
+import sys
+import json
+import urllib.request
+import urllib.parse
+import urllib.error
+
+TOKEN = os.environ.get('GITEE_TOKEN', '')
+if not TOKEN:
+    print("[FAIL] 环境变量 GITEE_TOKEN 未设置。")
+    print("       请先执行:  $env:GITEE_TOKEN='你的token'  (PowerShell)")
+    print("       或生成新 token:  https://gitee.com/profile/personal_access_tokens")
+    sys.exit(1)
+
 OWNER = 'cpufreestyle'
 REPO = 'network-reset-tool'
-RELEASE_ID = 679537
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RELEASE_ID = sys.argv[2] if len(sys.argv) > 2 else 679537
+
 
 def api_get(path):
     url = f'https://gitee.com/api/v5/repos/{OWNER}/{REPO}{path}?access_token={TOKEN}'
     req = urllib.request.Request(url)
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode('utf-8'))
+
 
 def api_delete(path):
     url = f'https://gitee.com/api/v5/repos/{OWNER}/{REPO}{path}'
@@ -22,6 +44,7 @@ def api_delete(path):
             return resp.status
     except urllib.error.HTTPError as e:
         print(f"Delete HTTP {e.code}: {e.read().decode()}")
+
 
 # 删除旧 exe
 print("清理旧 exe...")
@@ -37,7 +60,11 @@ for f in files:
             print(f"  Delete failed: {e}")
 
 # 上传新 exe
-exe_path = r'D:\qclaw-workspace\network-reset-tool\dist\网络工具箱.exe'
+exe_path = os.path.join(BASE_DIR, sys.argv[1] if len(sys.argv) > 1 else 'dist', '网络工具箱.exe')
+exe_path = os.path.normpath(exe_path)
+if not os.path.isfile(exe_path):
+    print(f"[FAIL] 找不到 exe: {exe_path}")
+    sys.exit(1)
 exe_size = os.path.getsize(exe_path)
 print(f"\n上传: {os.path.basename(exe_path)} ({exe_size:,} bytes)")
 

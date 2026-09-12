@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-网络重置/代理修复工具 - GUI 版本 v3.2 (跨平台: Windows / macOS)
-修复:
+网络重置/代理修复工具 - GUI 版本 v3.3 (跨平台: Windows / macOS)
+功能:
   1. DNS切换"未找到活动网卡"问题 - 改进适配器检测逻辑
   2. 日志界面闪退 - 修复线程安全问题
   3. Lambda捕获bug - 使用functools.partial或默认参数
   4. 网络诊断卡死 - 增加超时和异常处理
   5. DNS lookup bug - 跳过DNS服务器自身IP取真实结果
-  6. 母亲节特别版 - 温馨问候语
-  7. Windows 7 (32/64-bit) 兼容性支持
+  6. Windows 7 (32/64-bit) 兼容性支持
      - Get-NetAdapter/WMI 双通道自动切换
      - Resolve-DnsName → nslookup 回退
      - Test-NetConnection → tracert.exe 回退
      - 字体自动检测回退
+  7. macOS 支持 - 代理修复 + DNS 刷新 + ARP 清除
 """
 
 import os
@@ -1256,6 +1256,106 @@ class ProxyRepairTool:
             self.log(f"重启 Clash 核心失败: {e}")
             return False
 
+    # ---------- Clash 节点检查 / 自动切换 ----------
+    def _clash_api_get(self, port, secret, path):
+        """GET Clash external-controller API"""
+        import urllib.request
+        import json
+        url = f"http://127.0.0.1:{port}{path}"
+        headers = {}
+        if secret:
+            headers['Authorization'] = f"Bearer {secret}"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            self.log(f"Clash API GET {path} 失败: {e}")
+            return None
+
+    def _clash_api_put(self, port, secret, path, payload):
+        """PUT Clash external-controller API"""
+        import urllib.request
+        import json
+        url = f"http://127.0.0.1:{port}{path}"
+        headers = {'Content-Type': 'application/json'}
+        if secret:
+            headers['Authorization'] = f"Bearer {secret}"
+        try:
+            req = urllib.request.Request(
+                url, data=json.dumps(payload).encode('utf-8'),
+                headers=headers, method='PUT')
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                return resp.status in (200, 204)
+        except Exception as e:
+            self.log(f"Clash API PUT {path} 失败: {e}")
+            return False
+
+    def _find_dead_group(self, port, secret):
+        """返回第一个选中了死节点(delay=0/None)的 Selector 组 (group, node)，没有则 None"""
+        data = self._clash_api_get(port, secret, '/proxies')
+        if not data or 'proxies' not in data:
+            return None
+        proxies = data['proxies']
+        for name, info in proxies.items():
+            if info.get('type') != 'Selector':
+                continue
+            now = info.get('now')
+            if not now:
+                continue
+            node = proxies.get(now)
+            delay = node.get('delay') if node else None
+            if delay is None or delay == 0:
+                return name, now
+        return None
+
+    def _find_auto_group(self, proxies):
+        """在 /proxies 数据中找 URLTest 自动选择组（优先类型，其次常见中文名兜底）"""
+        auto = next((n for n, i in proxies.items() if i.get('type') == 'URLTest'), None)
+        if not auto:
+            for cand in ('自动选择', '🚀 节点选择', '♻️ 自动选择', 'Auto', 'auto'):
+                if cand in proxies:
+                    auto = cand
+                    break
+        return auto
+
+    def repair_clash_selection(self, port, secret):
+        """检查 Clash 当前选中的节点：若 delay=0(死节点) 则自动切到 URLTest 自动选择组。
+        返回 [(描述, 是否成功), ...]"""
+        import urllib.parse
+        result = []
+        data = self._clash_api_get(port, secret, '/proxies')
+        if not data or 'proxies' not in data:
+            return result
+        proxies = data['proxies']
+        # 收集用户可选组(Selector)，检查其当前选中节点
+        dead_groups = []
+        for name, info in proxies.items():
+            if info.get('type') != 'Selector':
+                continue
+            now = info.get('now')
+            if not now:
+                continue
+            node = proxies.get(now)
+            delay = node.get('delay') if node else None
+            if delay is None or delay == 0:
+                dead_groups.append((name, now))
+        if not dead_groups:
+            return result
+        # 找 URLTest 自动选择组
+        auto = self._find_auto_group(proxies)
+        if not auto:
+            result.append(("检测到死节点，但未找到可用的自动选择组", False))
+            return result
+        for name, now in dead_groups:
+            ok = self._clash_api_put(port, secret,
+                                     '/proxies/' + urllib.parse.quote(name),
+                                     {'name': auto})
+            result.append((
+                f"节点 [{now}] 已失效(delay=0)，已把 [{name}] 自动切到 [{auto}]",
+                ok))
+        return result
+
     # ---------- 一键诊断 ----------
     def diagnose(self):
         """返回诊断结论字典"""
@@ -1305,6 +1405,16 @@ class ProxyRepairTool:
                     "Clash 的 dns.enable=false,而 enhanced-mode=fake-ip,会导致所有域名解析超时")
                 result['suggestions'].append(
                     "开启 Clash DNS(enable:true)并重启核心")
+            # 死节点检测：当前选中节点 delay=0
+            port, secret = self.read_clash_controller(cfg_dir)
+            if port:
+                dead = self._find_dead_group(port, secret)
+                if dead:
+                    group, node = dead
+                    result['issues'].append(
+                        f"Clash 当前选中节点 [{node}] 已失效(delay=0),外网会连不上")
+                    result['suggestions'].append(
+                        f"一键修复会自动把 [{group}] 切到自动选择组")
         elif core:
             result['suggestions'].append(
                 "未找到 Clash 配置目录,无法自动修复 DNS,请手动检查订阅")
@@ -1353,6 +1463,15 @@ class ProxyRepairTool:
                             actions.append("DNS 配置已改,但核心重启失败(请手动在 GUI 里应用/重启)")
                 else:
                     actions.append("Clash DNS 无需修改")
+        # 3) Clash 当前选中的节点已失效(delay=0) -> 自动切到自动选择组
+        cfg_dir = self.find_clash_config_dir()
+        if cfg_dir:
+            port, secret = self.read_clash_controller(cfg_dir)
+            if port:
+                for desc, success in self.repair_clash_selection(port, secret):
+                    actions.append(desc)
+                    if not success:
+                        ok = False
         if not actions:
             actions.append("无需修复")
         return ok, actions
@@ -2653,7 +2772,7 @@ class App(tk.Tk):
         except Exception:
             pass
 
-        self.title("网络工具箱 v3.2 ✨")
+        self.title("网络工具箱 v3.3 ✨")
         self.geometry("780x640")
         self.minsize(720, 580)
         self.configure(bg=COLORS["bg"])
@@ -2661,20 +2780,22 @@ class App(tk.Tk):
         # 先让窗口显示出来,再做后续初始化
         self.update_idletasks()
 
-        # ===== 母亲节问候 =====
+        # ===== 节日问候（母亲节 = 每年5月第二个周日，动态计算） =====
         try:
             import datetime
             today = datetime.datetime.now()
-            mother_day_msg = (
-                "🌷 母亲节快乐!🌷\n\n"
-                "祝天下所有妈妈:\n"
-                "健康平安,笑口常开!\n\n"
-                "❤️ 感谢您一直以来的付出 ❤️\n\n"
-                "-- 您的网络工具箱 v3.2"
-            )
-            # 母亲节是每年5月第二个周日,2026年是5月10日
-            if today.month == 5 and today.day in [9, 10]:
-                messagebox.showinfo("🌸 母亲节快乐 🌸", mother_day_msg)
+            if today.month == 5:
+                first = today.replace(day=1)
+                second_sunday = 1 + ((6 - first.weekday()) % 7) + 7
+                if today.day == second_sunday:
+                    mother_day_msg = (
+                        "🌷 母亲节快乐!🌷\n\n"
+                        "祝天下所有妈妈:\n"
+                        "健康平安,笑口常开!\n\n"
+                        "❤️ 感谢您一直以来的付出 ❤️\n\n"
+                        "-- 您的网络工具箱 v3.3"
+                    )
+                    messagebox.showinfo("🌸 母亲节快乐 🌸", mother_day_msg)
         except Exception:
             pass  # 静默忽略任何节日弹窗错误
 
@@ -2691,7 +2812,7 @@ class App(tk.Tk):
         tk.Label(topbar, text="🛠️  网络工具箱",
                  font=(FONT_FAMILY, 14, "bold"), fg=COLORS["text"],
                  bg=COLORS["surface"]).pack(side="left")
-        tk.Label(topbar, text="v3.2  ·  重置 + 诊断  ·  🌸 母亲节快乐!",
+        tk.Label(topbar, text="v3.3  ·  重置 + 诊断 + 代理修复",
                  font=(FONT_FAMILY, 9), fg=COLORS["pink"],
                  bg=COLORS["surface"]).pack(side="left", padx=10)
 
@@ -2742,7 +2863,7 @@ class App(tk.Tk):
         # 底部版本信息
         footer = tk.Frame(self, bg=COLORS["surface"], pady=4)
         footer.pack(fill="x")
-        tk.Label(footer, text="Network Reset Tool v3.2  ·  michaelqiu  ·  🌷 5月10日 母亲节",
+        tk.Label(footer, text="Network Reset Tool v3.3  ·  michaelqiu",
                  font=(FONT_FAMILY, 8), fg=COLORS["muted"], bg=COLORS["surface"]).pack(side="right", padx=10)
 
     def _switch_tab(self, tid):

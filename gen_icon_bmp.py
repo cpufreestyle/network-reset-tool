@@ -2,7 +2,7 @@
 from PIL import Image
 import os, struct
 
-BASE = r"D:\qclaw-workspace\network-reset-tool"
+BASE = os.path.dirname(os.path.abspath(__file__))
 src = Image.open(os.path.join(BASE, "icon_preview.png")).convert("RGBA")
 sizes = [16, 24, 32, 48, 64, 128, 256]
 

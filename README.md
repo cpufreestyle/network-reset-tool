@@ -1,4 +1,4 @@
-# 网络工具箱 v3.2
+# 网络工具箱 v3.3
 
 <p align="center">
   <img src="https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/cover.png" width="800" alt="网络工具箱" />
@@ -9,11 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%207%2B%20%7C%20macOS-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/Python-3.11-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-v3.2-orange.svg)]()
+[![Version](https://img.shields.io/badge/Version-v3.3-orange.svg)]()
 
 修复网络连接问题 · 重置 Winsock/TCP/IP · 清除 DNS/ARP 缓存 · 网络诊断（Ping/DNS/Traceroute）
 
-[下载 exe](#下载) · [GitHub Release v3.2](https://github.com/cpufreestyle/network-reset-tool/releases/tag/v3.2) · [报告问题](https://gitee.com/cpufreestyle/network-reset-tool/issues) · [使用说明](#使用方法)
+[下载 exe](#下载) · [GitHub Release v3.3](https://github.com/cpufreestyle/network-reset-tool/releases/tag/v3.3) · [报告问题](https://gitee.com/cpufreestyle/network-reset-tool/issues) · [使用说明](#使用方法)
 
 ---
 
@@ -109,6 +109,7 @@ GUI 源码现在跨平台，同一份 `network_reset_gui.py` 可在 **Windows** 
 | 功能 | macOS 实现 |
 |:---:|:---|
 | 🛡️ 代理修复（诊断/一键修复） | Clash 控制器 HTTP + 配置（纯文件/HTTP，两端复用） |
+| Clash 死节点自动切换 | 检测当前选中节点 delay=0，自动切到 URLTest 自动选择组 |
 | 系统代理读取/设置 | `networksetup -getwebproxy / -setwebproxy` |
 | DNS 刷新 | `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder` |
 | DNS 设置/切换 | `networksetup -setdnsservers`（"网络重置"标签页里的自定义 DNS 按钮在 Mac 上保留可用） |
