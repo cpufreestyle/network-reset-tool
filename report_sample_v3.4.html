@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网络诊断报告 - 2026-09-10 14-41-33</title>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --bg: #ffffff;
+    --soft: #f6f8fa; --ok: #1a7f37; --bad: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px 20px 56px; background: var(--soft);
+         color: var(--fg); font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; background: var(--bg);
+           border: 1px solid var(--line); border-radius: 12px; padding: 32px 36px 28px; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+  h2 { font-size: 15px; margin: 30px 0 10px; padding-bottom: 6px;
+        border-bottom: 1px solid var(--line); }
+  .score { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .score .num { font-size: 48px; font-weight: 700; color: #1a7f37; line-height: 1; }
+  .score .grade { font-size: 18px; font-weight: 700; color: #1a7f37; }
+  .score .advice { color: var(--muted); font-size: 13px; }
+  .metrics { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+  .metric { flex: 1 1 150px; background: var(--soft); border: 1px solid var(--line);
+             border-radius: 8px; padding: 12px 14px; }
+  .metric .k { font-size: 12px; color: var(--muted); }
+  .metric .v { font-size: 20px; font-weight: 700; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line);
+            vertical-align: top; word-break: break-all; }
+  th { width: 150px; color: var(--muted); font-weight: 600; background: var(--soft); }
+  thead th { width: auto; color: var(--fg); }
+  td.ok { color: var(--ok); font-weight: 600; }
+  td.bad { color: var(--bad); font-weight: 600; }
+  .conclusion { background: var(--soft); border-left: 4px solid #1a7f37;
+                 padding: 12px 14px; border-radius: 0 8px 8px 0; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px;
+            border-top: 1px solid var(--line); padding-top: 12px; }
+  @media print { body { background: #fff; padding: 0; } .wrap { border: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>网络诊断报告</h1>
+  <div class="sub">由 网络工具箱 3.4.0 生成</div>
+
+  <h2>综合评分</h2>
+  <div class="score">
+    <div class="num">100</div>
+    <div>
+      <div class="grade">优秀</div>
+      <div class="advice">网络状态优秀，所有检测通过，继续保持。</div>
+    </div>
+  </div>
+  <div class="metrics">
+    <div class="metric"><div class="k">连通性</div><div class="v">5/5</div></div>
+    <div class="metric"><div class="k">DNS 可用</div><div class="v">3/3</div></div>
+    <div class="metric"><div class="k">平均延迟</div><div class="v">54.4ms</div></div>
+    <div class="metric"><div class="k">平均丢包</div><div class="v">0.0%</div></div>
+  </div>
+
+  <h2>结论</h2>
+  <div class="conclusion">网络状态正常：所有目标连通，DNS 解析正常。</div>
+
+  <h2>环境信息</h2>
+  <table><tr><th>生成时间</th><td>2026-09-10 14:41:33</td></tr><tr><th>计算机名</th><td>z690steel</td></tr><tr><th>操作系统</th><td>Windows 10 (10.0.26200)</td></tr><tr><th>系统架构</th><td>-</td></tr><tr><th>Python 版本</th><td>3.11.9</td></tr><tr><th>以管理员运行</th><td>否</td></tr><tr><th>工具版本</th><td>网络工具箱 3.4.0</td></tr></table>
+
+  <h2>网络状态总览</h2>
+  <table><tr><th>状态</th><td>up</td></tr><tr><th>接口</th><td>Ethernet 2</td></tr><tr><th>描述</th><td>Realtek Gaming 2.5GbE Family Controller #2</td></tr><tr><th>MAC</th><td>04-42-1A-EA-DE-8A</td></tr><tr><th>速度</th><td>1 Gbps</td></tr><tr><th>IPv4</th><td>172.16.20.242</td></tr><tr><th>网关</th><td>172.16.20.1</td></tr><tr><th>DNS</th><td>223.5.5.5, 114.114.114.114, 8.8.8.8</td></tr></table>
+
+  <h2>Ping 连通性测试</h2>
+  <table>
+    <thead><tr><th>目标</th><th>地址</th><th>结果</th><th>平均延迟</th><th>丢包</th></tr></thead>
+    <tbody><tr><td>Google DNS</td><td>8.8.8.8</td><td class='ok'>可达</td><td>177ms</td><td>0%</td></tr><tr><td>Cloudflare DNS</td><td>1.1.1.1</td><td class='ok'>可达</td><td>67ms</td><td>0%</td></tr><tr><td>阿里 DNS</td><td>223.5.5.5</td><td class='ok'>可达</td><td>14ms</td><td>0%</td></tr><tr><td>百度</td><td>www.baidu.com</td><td class='ok'>可达</td><td>8ms</td><td>0%</td></tr><tr><td>腾讯</td><td>www.qq.com</td><td class='ok'>可达</td><td>6ms</td><td>0%</td></tr></tbody>
+  </table>
+
+  <h2>DNS 解析测试</h2>
+  <table>
+    <thead><tr><th>服务器</th><th>地址</th><th>结果</th><th>解析 IP</th></tr></thead>
+    <tbody><tr><td>阿里 DNS</td><td>223.5.5.5</td><td class='ok'>正常</td><td>180.101.51.73</td></tr><tr><td>Google DNS</td><td>8.8.8.8</td><td class='ok'>正常</td><td>103.235.46.115</td></tr><tr><td>Cloudflare</td><td>1.1.1.1</td><td class='ok'>正常</td><td>103.235.46.102</td></tr></tbody>
+  </table>
+
+  <footer>本报告仅反映生成时刻的网络状态，供排查参考。</footer>
+</div>
+</body>
+</html>

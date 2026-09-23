@@ -1,0 +1,95 @@
+# -*- coding: utf-8 -*-
+"""网络工具箱 (network_toolbox) - 内部包。
+
+由 network_reset_gui.py 拆分而来; 对外通过 network_reset_gui 兼容入口暴露。
+本 __init__ 汇总并重新导出全部公共 API(含测试所需的下划线私有符号)。
+"""
+from network_toolbox._shared import (  # noqa: F401
+    ADAPTER_AUTO,
+    APP_AUTHOR,
+    APP_NAME,
+    APP_VERSION,
+    APP_VERSION_SHORT,
+    COLORS,
+    DNS_PRESETS,
+    FONT_FAMILY,
+    FONT_MONO,
+    IS_LINUX,
+    IS_MAC,
+    IS_WINDOWS,
+    ToolTip,
+    _HOSTNAME_RE,
+    _IPV4_RE,
+    _SINGLETON_PORT,
+    _SINGLETON_SOCKET,
+    _acquire_singleton,
+    _am_first,
+    _app_data_dir,
+    _apply_proxy_setting,
+    _init_font,
+    _is_mothers_day,
+    _is_win7_or_older,
+    _mac_primary_service,
+    _release_singleton,
+    attach_tooltip,
+    decode_output,
+    dns_preset_tip,
+    is_admin,
+    is_valid_target,
+    make_btn_style,
+    styled_btn,
+    ui_sync,
+)
+from network_toolbox.engine import (  # noqa: F401
+    NetworkResetTool, NetworkDiagnostic, ProxyRepairTool,
+)
+from network_toolbox.report import (  # noqa: F401
+    compute_health, collect_report_meta, _latency_text,
+    render_report_html, render_report_text, render_report_markdown, render_report, open_path,
+)
+from network_toolbox.ui_panels import (  # noqa: F401
+    ResetPanel, DiagnosticPanel, ProxyPanel,
+)
+from network_toolbox.app import App  # noqa: F401
+
+__all__ = [
+    "ADAPTER_AUTO",
+    "APP_AUTHOR",
+    "APP_NAME",
+    "APP_VERSION",
+    "APP_VERSION_SHORT",
+    "COLORS",
+    "DNS_PRESETS",
+    "FONT_FAMILY",
+    "FONT_MONO",
+    "IS_LINUX",
+    "IS_MAC",
+    "IS_WINDOWS",
+    "ToolTip",
+    "_HOSTNAME_RE",
+    "_IPV4_RE",
+    "_SINGLETON_PORT",
+    "_SINGLETON_SOCKET",
+    "_acquire_singleton",
+    "_am_first",
+    "_app_data_dir",
+    "_apply_proxy_setting",
+    "_init_font",
+    "_is_mothers_day",
+    "_is_win7_or_older",
+    "_mac_primary_service",
+    "_release_singleton",
+    "attach_tooltip",
+    "decode_output",
+    "dns_preset_tip",
+    "is_admin",
+    "is_valid_target",
+    "make_btn_style",
+    "styled_btn",
+    "ui_sync",
+    "NetworkResetTool", "NetworkDiagnostic", "ProxyRepairTool",
+    "compute_health", "collect_report_meta", "_latency_text",
+    "render_report_html", "render_report_text", "render_report_markdown", "render_report", "open_path",
+    "ResetPanel", "DiagnosticPanel", "ProxyPanel",
+    "App",
+]
