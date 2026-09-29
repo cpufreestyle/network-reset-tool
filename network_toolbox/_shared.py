@@ -31,6 +31,11 @@ def _acquire_singleton():
     global _SINGLETON_SOCKET
     try:
         _SINGLETON_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # SO_REUSEADDR: 避免上次 TIME_WAIT 残留导致重启时误判"已在运行"
+        try:
+            _SINGLETON_SOCKET.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except OSError:
+            pass
         _SINGLETON_SOCKET.bind(('127.0.0.1', _SINGLETON_PORT))
         _SINGLETON_SOCKET.listen(1)
         return True  # 成功绑定 = 第一个实例
@@ -95,7 +100,7 @@ def _mac_primary_service():
             if m and m.group(1) == iface:
                 name = line.split(',', 1)[0].split(')', 1)[-1].strip()
                 return name
-        # 退回: 取第一个未禁用的服务
+        # 退回, 取第一个未禁用的服务
         for s in svcs.splitlines()[1:]:
             s = s.strip()
             if s and not s.startswith('*'):
@@ -115,35 +120,81 @@ def _is_win7_or_older():
     except Exception:
         return False
 
-COLORS = {
-    "bg": "#1e1e2e",
-    "surface": "#313244",
-    "surface2": "#45475a",
-    "bg2": "#181825",
-    "text": "#cdd6f4",
-    "subtext": "#a6adc8",
-    "muted": "#6c7086",
-    "green": "#a6e3a1",
-    "yellow": "#f9e2af",
-    "red": "#f38ba8",
-    "blue": "#89b4fa",
-    "purple": "#cba6f7",
-    "orange": "#fab387",
-    "teal": "#94e2d5",
-    "pink": "#f5c2e7",
-    "sky": "#89dceb",
-    "mauve": "#b4befe",  # lavender，与 purple 区分，用于「导出报告」
+# 主题配色表（F11 深色/浅色切换）。语义键名如下：
+#   bg/surface/surface2/bg2  由深到浅的界面层次；bg2 是结果区画布底色
+#   text/subtext/muted       主文字/次要文字/弱化文字
+#   green..mauve             功能强调色；card 是内容卡片底色
+#   warn_bg/warn_fg          顶部警示横幅（权限不足/平台不支持）
+THEMES = {
+    "dark": {
+        "bg": "#1e1e2e",
+        "surface": "#313244",
+        "surface2": "#45475a",
+        "bg2": "#181825",
+        "text": "#cdd6f4",
+        "subtext": "#a6adc8",
+        "muted": "#6c7086",
+        "green": "#a6e3a1",
+        "yellow": "#f9e2af",
+        "red": "#f38ba8",
+        "blue": "#89b4fa",
+        "purple": "#cba6f7",
+        "orange": "#fab387",
+        "teal": "#94e2d5",
+        "pink": "#f5c2e7",
+        "sky": "#89dceb",
+        "mauve": "#b4befe",  # lavender，与 purple 区分，用于「导出报告」
+        "card": "#2a2a3e",
+        "warn_bg": "#3a2a2a",
+        "warn_fg": "#ffb4a0",
+    },
+    "light": {
+        "bg": "#eff1f5",
+        "surface": "#e6e9ef",
+        "surface2": "#dce0e8",
+        "bg2": "#e6e9ef",
+        "text": "#4c4f69",
+        "subtext": "#5c5f77",
+        "muted": "#7c7f93",
+        "green": "#40a02b",
+        "yellow": "#df8e1d",
+        "red": "#d20f39",
+        "blue": "#1e66f5",
+        "purple": "#8839ef",
+        "orange": "#fe640b",
+        "teal": "#179299",
+        "pink": "#ea76cb",
+        "sky": "#04a5e5",
+        "mauve": "#7287fd",
+        "card": "#ffffff",
+        "warn_bg": "#ffd9d2",
+        "warn_fg": "#a11208",
+    },
 }
+
+DEFAULT_THEME = "dark"
+THEME_NAMES = ("dark", "light")
+THEME_LABELS = {"dark": "🌙 深色", "light": "☀️ 浅色"}
+
+# COLORS 是"当前生效"的字典: set_theme() 就地覆写它, 因此 ui_panels/app 里
+# `from network_toolbox._shared import COLORS` 持有的同一对象会同步换色,
+# 无需逐个模块改引用(避免 import 别名过期导致漏刷新)。
+COLORS = dict(THEMES[DEFAULT_THEME])
 
 APP_NAME = "网络工具箱"
 
-APP_VERSION = "3.4.0"
+APP_VERSION = "4.6.0"
 
 APP_AUTHOR = "michaelqiu"
 
 ADAPTER_AUTO = "自动检测（推荐）"   # 网卡下拉框的默认值
 
 APP_VERSION_SHORT = "v" + ".".join(APP_VERSION.split(".")[:2])  # -> v3.3
+
+# 发布渠道（Gitee Release；auto_updater 与 gitee_upload.py 共用：
+GITEE_OWNER = "cpufreestyle"
+GITEE_REPO = "network-reset-tool"
+EXE_ASSET_NAME = "网络工具箱.exe"
 
 def _app_data_dir():
     if IS_WINDOWS:
@@ -159,6 +210,47 @@ def _app_data_dir():
         path = os.path.dirname(os.path.abspath(sys.argv[0]))
     return path
 
+def theme_path():
+    """主题偏好文件路径(存放在应用数据目录, 与 monitor/ 等一致)。"""
+    return os.path.join(_app_data_dir(), "theme.txt")
+
+
+def current_theme():
+    """读取持久化的主题名; 没有记录/读失败时回落到默认主题。"""
+    try:
+        with open(theme_path(), "r", encoding="utf-8") as f:
+            name = f.read().strip().lower()
+        if name in THEME_NAMES:
+            return name
+    except Exception:
+        pass
+    return DEFAULT_THEME
+
+
+def set_theme(name):
+    """切换主题并持久化; 返回实际生效的主题名。
+
+    就地更新 COLORS(clear+update) 而不是重新赋值, 这样其他模块
+    `from ... import COLORS` 拿到的同一 dict 引用也会跟着变。
+    """
+    if name not in THEME_NAMES:
+        name = DEFAULT_THEME
+    COLORS.clear()
+    COLORS.update(THEMES[name])
+    try:
+        d = _app_data_dir()
+        with open(os.path.join(d, "theme.txt"), "w", encoding="utf-8") as f:
+            f.write(name)
+    except Exception:
+        pass  # 写不进去(只读目录/UAC)也不影响本次生效
+    return name
+
+
+def toggle_theme():
+    """深浅主题来回切, 返回生效的主题名。"""
+    return set_theme("light" if current_theme() == "dark" else "dark")
+
+
 def decode_output(raw_bytes):
     """把子进程输出安全地解码为 str（跨平台 / 跨 Windows 代码页）。"""
     if raw_bytes is None:
@@ -172,7 +264,7 @@ def decode_output(raw_bytes):
         return raw_bytes.decode("utf-16", errors="replace").lstrip("\ufeff")
     if raw_bytes[:3] == b"\xef\xbb\xbf":          # UTF-8 BOM
         return raw_bytes.decode("utf-8", errors="replace").lstrip("\ufeff")
-    # 2) UTF-16LE 特征：ASCII 字符后紧跟 NUL
+    # 2) UTF-16LE 特征：ASCII 字符后紧跨 NUL
     if b"\x00" in raw_bytes[:200]:
         try:
             return raw_bytes.decode("utf-16-le").lstrip("\ufeff")
@@ -198,6 +290,22 @@ _HOSTNAME_RE = re.compile(
 
 _IPV4_RE = re.compile(r"^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$")
 
+def http_user_agent(name, suffix=""):
+    """ASCII 安全的 User-Agent。
+
+    urllib 以 latin-1 编码 HTTP 请求头，所以中文 app_name 让每次请求都抛
+    UnicodeEncodeError（自动更新在 v3.4 才修过，而 F6 测速又圽了同一个坑）。
+    非 latin-1 可编码字符按 UTF-8 percent-encode，保证请求头始终合法。
+    """
+    out = []
+    for ch in str(name):
+        try:
+            ch.encode('latin-1')
+            out.append(ch)
+        except UnicodeEncodeError:
+            out.extend('%%%02X' % b for b in ch.encode('utf-8'))
+    return ''.join(out) + suffix
+
 def is_valid_target(target):
     """校验 ping / tracert / DNS 目标，杜绝 `8.8.8.8 & calc` 之类的注入。"""
     if not target or len(target) > 253:
@@ -214,15 +322,15 @@ def is_valid_target(target):
     return bool(_HOSTNAME_RE.match(target))
 
 DNS_PRESETS = {
-    "自动获取(DHCP)": {"mode": "dhcp", "primary": "", "secondary": "", "color": COLORS["muted"],
+    "自动获取(DHCP)": {"mode": "dhcp", "primary": "", "secondary": "", "color": "muted",
                         "hint": "把 DNS 交回路由器自动下发，清掉之前手动填写的地址；怀疑手动 DNS 填错时点它"},
-    "阿里 DNS":    {"mode": "static", "primary": "223.5.5.5",  "secondary": "223.6.6.6",  "color": COLORS["orange"],
+    "阿里 DNS":    {"mode": "static", "primary": "223.5.5.5",  "secondary": "223.6.6.6",  "color": "orange",
                      "hint": "阿里云公共 DNS，国内解析最快"},
-    "Google DNS": {"mode": "static", "primary": "8.8.8.8",    "secondary": "8.8.4.4",    "color": COLORS["blue"],
+    "Google DNS": {"mode": "static", "primary": "8.8.8.8",    "secondary": "8.8.4.4",    "color": "blue",
                     "hint": "全球通用，国内直连时常需配合代理"},
-    "Cloudflare": {"mode": "static", "primary": "1.1.1.1",    "secondary": "1.0.0.1",    "color": COLORS["sky"],
+    "Cloudflare": {"mode": "static", "primary": "1.1.1.1",    "secondary": "1.0.0.1",    "color": "sky",
                     "hint": "速度快，官方声明不记录日志"},
-    "114 DNS":    {"mode": "static", "primary": "114.114.114.114", "secondary": "114.114.115.115", "color": COLORS["pink"],
+    "114 DNS":    {"mode": "static", "primary": "114.114.114.114", "secondary": "114.114.115.115", "color": "pink",
                     "hint": "国内老牌运营商级 DNS，晚高峰偶有超时"},
 }
 
@@ -358,6 +466,33 @@ def styled_btn(parent, text, cmd, bg, fg=None, font_size=10, bold=False, tip=Non
                     command=cmd, **make_btn_style(), **kw)
     return attach_tooltip(btn, tip)
 
+def safe_after(widget, fn, delay_ms=0):
+    """把 fn 投递到 Tk 主线程执行; 窗口已销毁/正在销毁时静默失败。
+
+    工作线程收尾阶段调用 after() 会抛 RuntimeError/TclError(窗口没了),
+    裸 after(0, ...) 调用没有兜底时会往 stderr 打一条 traceback
+    (windowed 模式下表现为退出码非0/日志噪音)。统一走本函数消除该类问题。
+
+    回调本身也要兜住: after() 只保证"调度成功", 不保证"执行时控件还在"。
+    典型场景是换主题整树重建 / 关窗竞态——worker 线程排了队, 主线程先把旧面板
+    destroy 了, 回调里 cget/config 就抛 TclError: invalid command name。
+    所以执行阶段也要吞掉 TclError(注意: 不能在这里判 winfo_exists 后跳过 fn,
+    否则 ui_sync 里等 Event 的工作线程会白等到超时)。
+
+    返回值: after 的调度 id, 或 None(调度失败)。
+    """
+    def _run():
+        try:
+            fn()
+        except tk.TclError:
+            pass  # 窗口在"调度后、执行前"被销毁, 回调已无意义
+
+    try:
+        return widget.after(delay_ms, _run)
+    except Exception:
+        return None
+
+
 def ui_sync(widget, fn, timeout=30):
     """从工作线程把一段 UI 代码投递到 Tk 主线程执行，并等待其完成。
 
@@ -381,9 +516,7 @@ def ui_sync(widget, fn, timeout=30):
         finally:
             done.set()
 
-    try:
-        widget.after(0, _run)
-    except Exception:
+    if safe_after(widget, _run) is None:
         return None                 # 窗口已关闭
     if not done.wait(timeout=timeout):
         return None

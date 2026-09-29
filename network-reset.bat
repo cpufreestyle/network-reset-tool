@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-title 网络工具箱 v3.3 - 网络重置工具
+title 网络工具箱 v4.6 - 网络重置工具
 color 0A
 
 net session >nul 2>&1
@@ -19,7 +19,7 @@ setlocal enabledelayedexpansion
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.3
+echo     网络工具箱 v4.6
 echo     网络重置 + DNS切换 + 诊断 + 代理修复
 echo  ========================================
 echo.
@@ -27,15 +27,21 @@ echo  [1] 完整网络重置（6阶段）
 echo  [2] 快速DNS切换
 echo  [3] 网络诊断
 echo  [4] 代理修复（系统代理/Clash）
-echo  [5] 退出
+echo  [5] 端口查看（监听端口/进程）
+echo  [6] 网速测试（下载带宽）
+echo  [7] WiFi 信息（已保存密码）
+echo  [8] 退出
 echo.
-set /p choice=请选择 (1-5): 
+set /p choice=请选择 (1-8): 
 
 if "%choice%"=="1" goto FULL_RESET
 if "%choice%"=="2" goto DNS_SWITCH
 if "%choice%"=="3" goto DIAGNOSTIC
 if "%choice%"=="4" goto PROXY_FIX
-if "%choice%"=="5" exit /b 0
+if "%choice%"=="5" goto PORT_LIST
+if "%choice%"=="6" goto SPEED_TEST
+if "%choice%"=="7" goto WIFI_INFO
+if "%choice%"=="8" exit /b 0
 goto MENU
 
 :: ============================================================
@@ -45,7 +51,7 @@ goto MENU
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.3 - 完整网络重置
+echo     网络工具箱 v4.6 - 完整网络重置
 echo  ========================================
 echo.
 
@@ -117,7 +123,7 @@ goto MENU
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.3 - DNS 快速切换
+echo     网络工具箱 v4.6 - DNS 快速切换
 echo  ========================================
 echo.
 
@@ -193,7 +199,7 @@ goto MENU
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.3 - 网络诊断
+echo     网络工具箱 v4.6 - 网络诊断
 echo  ========================================
 echo.
 
@@ -282,7 +288,7 @@ goto MENU
 cls
 echo.
 echo  ========================================
-echo     网络工具箱 v3.3 - 代理修复
+echo     网络工具箱 v4.6 - 代理修复
 echo  ========================================
 echo.
 echo  正在启动代理修复工具...
@@ -320,6 +326,140 @@ goto MENU
 
 :PROXY_DONE
 echo  已启动代理修复工具（若未弹出窗口，请在任务栏查看）。
+echo.
+pause
+goto MENU
+
+:: ============================================================
+::  端口查看（一键打开 GUI 的端口查看标签页）
+:: ============================================================
+:PORT_LIST
+cls
+echo.
+echo  ========================================
+echo     网络工具箱 v4.6 - 端口查看
+echo  ========================================
+echo.
+echo  正在启动端口查看工具...
+echo  (将打开图形界面并定位到 "🔌 端口查看" 标签)
+echo.
+
+set "EXE_PATH=%~dp0网络工具箱.exe"
+if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0网络工具箱_win7_x86.exe"
+if exist "%EXE_PATH%" (
+    start "" "%EXE_PATH%" --tab ports
+    goto PORT_DONE
+)
+
+set "SRC_PATH=%~dp0network_reset_gui.py"
+if exist "%SRC_PATH%" (
+    where py >nul 2>&1 && (
+        start "" py -3.11 "%SRC_PATH%" --tab ports
+        goto PORT_DONE
+    )
+    where python >nul 2>&1 && (
+        start "" python "%SRC_PATH%" --tab ports
+        goto PORT_DONE
+    )
+    echo  未找到 Python 运行环境，无法启动图形界面。
+    echo  请安装 Python 3.11 或使用 "网络工具箱.exe"。
+    pause
+    goto MENU
+)
+
+echo  未找到 网络工具箱.exe 或 network_reset_gui.py。
+pause
+goto MENU
+
+:PORT_DONE
+echo  已启动端口查看工具（若未弹出窗口，请在任务栏查看）。
+echo.
+pause
+goto MENU
+:SPEED_TEST
+cls
+echo.
+echo  ========================================
+echo     网络工具箱 v4.6 - 网速测试
+echo  ========================================
+echo.
+echo  正在启动网速测试工具...
+echo  (将打开图形界面并定位到 "⚡ 网速测试" 标签)
+echo.
+
+set "EXE_PATH=%~dp0网络工具箱.exe"
+if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0网络工具箱_win7_x86.exe"
+if exist "%EXE_PATH%" (
+    start "" "%EXE_PATH%" --tab speed
+    goto SPEED_DONE
+)
+
+set "SRC_PATH=%~dp0network_reset_gui.py"
+if exist "%SRC_PATH%" (
+    where py >nul 2>&1 && (
+        start "" py -3.11 "%SRC_PATH%" --tab speed
+        goto SPEED_DONE
+    )
+    where python >nul 2>&1 && (
+        start "" python "%SRC_PATH%" --tab speed
+        goto SPEED_DONE
+    )
+    echo  未找到 Python 运行环境，无法启动图形界面。
+    echo  请安装 Python 3.11 或使用 "网络工具箱.exe"。
+    pause
+    goto MENU
+)
+
+echo  未找到 网络工具箱.exe 或 network_reset_gui.py。
+pause
+goto MENU
+
+:SPEED_DONE
+echo  已启动网速测试工具（若未弹出窗口，请在任务栏查看）。
+echo.
+pause
+goto MENU
+
+:WIFI_INFO
+cls
+echo.
+echo  ========================================
+echo     网络工具箱 v4.6 - WiFi 信息
+echo  ========================================
+echo.
+echo  正在启动 WiFi 信息工具...
+echo  (将打开图形界面并定位到 "📶 WiFi 信息" 标签)
+echo.
+
+set "EXE_PATH=%~dp0网络工具箱.exe"
+if not exist "%EXE_PATH%" set "EXE_PATH=%~dp0网络工具箱_win7_x86.exe"
+if exist "%EXE_PATH%" (
+    start "" "%EXE_PATH%" --tab wifi
+    goto WIFI_DONE
+)
+
+set "SRC_PATH=%~dp0network_reset_gui.py"
+if exist "%SRC_PATH%" (
+    where py >nul 2>&1 && (
+        start "" py -3.11 "%SRC_PATH%" --tab wifi
+        goto WIFI_DONE
+    )
+    where python >nul 2>&1 && (
+        start "" python "%SRC_PATH%" --tab wifi
+        goto WIFI_DONE
+    )
+    echo  未找到 Python 运行环境，无法启动图形界面。
+    echo  请安装 Python 3.11 或使用 "网络工具箱.exe"。
+    pause
+    goto MENU
+)
+
+echo  未找到 网络工具箱.exe 或 network_reset_gui.py。
+pause
+goto MENU
+
+:WIFI_DONE
+echo  已启动 WiFi 信息工具（若未弹出窗口，请在任务栏查看）。
 echo.
 pause
 goto MENU

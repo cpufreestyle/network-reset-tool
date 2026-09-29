@@ -33,17 +33,79 @@ import threading
 import tempfile
 import zipfile
 import subprocess
+import hashlib
 import urllib.request
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from datetime import datetime
+
+
+class UpdateIntegrityError(Exception):
+    """更新完整性校验失败（无校验和 / 校验和不匹配 / 域名不在白名单）。
+
+    fail-closed 策略: 宁可拒绝更新, 也不用未校验的二进制覆盖自身。
+    """
+
+
+def parse_checksums(text, wanted=None):
+    """解析 Release 附带的 SHA256 校验文件。
+
+    支持三种格式:
+      - sha256sum 风格: "<64位hex>  <文件名>"(可多行)
+      - 纯 hex(整个文件只有一个校验值, 无名)
+      - JSON: {"文件名": "hex", ...}
+    返回 {文件名: hex}; 纯 hex 格式返回 {"*": hex}。
+    wanted 非空且存在具名条目时, 只保留该文件名的条目。
+    """
+    if not text or not text.strip():
+        return {}
+    text = text.strip()
+    # JSON 优先
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            out = {str(k): str(v).strip().lower() for k, v in data.items()}
+            if wanted:
+                return {k: v for k, v in out.items() if k == wanted}
+            return out
+    except (ValueError, TypeError):
+        pass
+    result = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        digest = parts[0].strip().lower()
+        if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+            continue
+        if len(parts) == 1:
+            result['*'] = digest
+        else:
+            name = parts[1].strip().lstrip('*').strip()
+            if name:
+                result[name] = digest
+    if wanted and '*' not in result:
+        return {k: v for k, v in result.items() if k == wanted}
+    return result
+
+
+def sha256_file(path):
+    """计算文件的 SHA256 十六进制摘要"""
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class AutoUpdater:
     """基于 Gitee Release 的自动更新器"""
 
     def __init__(self, app_name, current_version, gitee_owner, gitee_repo,
-                 exe_pattern=None, check_on_start=True, silent=True):
+                 exe_pattern=None, check_on_start=True, silent=True,
+                 require_checksum=True):
         """
         参数:
             app_name: 应用名称（用于日志和标题）
@@ -62,6 +124,9 @@ class AutoUpdater:
         self.gitee_repo = gitee_repo
         self.exe_pattern = exe_pattern
         self.silent = silent
+        # 安全策略：默认强制 SHA256 校验（fail-closed），仅调试时可显式关闭
+        self.require_checksum = require_checksum
+        self._verified_digest = None
 
         # 本地更新状态文件
         self.state_file = os.path.join(
@@ -80,6 +145,86 @@ class AutoUpdater:
     def _parse_version(v):
         """解析版本号为元组，方便比较"""
         return tuple(int(x) for x in v.replace('v', '').split('.')[:3])
+
+    # 下载域名白名单：只允许 gitee.com 及其子域（防 DNS 劫持/中间人）
+    ALLOWED_DOWNLOAD_HOSTS = ("gitee.com",)
+
+    @staticmethod
+    def _user_agent(name):
+        """ASCII 安全的 User-Agent。
+
+        urllib 以 latin-1 编码 HTTP 头, 中文 app_name 曾让每次请求直接抛异常。
+        非 latin-1 可编码字符按 UTF-8 percent-encode, 保证头始终合法。
+        """
+        out = []
+        for ch in str(name):
+            try:
+                ch.encode('latin-1')
+                out.append(ch)
+            except UnicodeEncodeError:
+                out.extend(f"%{b:02X}" for b in ch.encode('utf-8'))
+        return f"{''.join(out)}-AutoUpdater/2.0"
+
+    def _check_host(self, url):
+        """校验 URL 主机在下载白名单内（精确或子域匹配），否则拒绝。
+
+        返回 True；不在白名单时抛 UpdateIntegrityError（fail-closed）。
+        """
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+        for allowed in self.ALLOWED_DOWNLOAD_HOSTS:
+            if host == allowed or host.endswith("." + allowed):
+                return True
+        raise UpdateIntegrityError(f"拒绝非白名单下载地址: {host or '(无主机名)'}")
+
+    def _open(self, url, timeout=15):
+        """打开 URL 前校验白名单；跟随重定向后对最终地址二次校验。"""
+        self._check_host(url)
+        resp = urllib.request.urlopen(url, timeout=timeout)
+        final = resp.geturl()
+        if final and final != url:
+            self._check_host(final)
+        return resp
+
+    @staticmethod
+    def verify_file(path, expected):
+        """校验文件 SHA256；不匹配/缺期望值一律抛 UpdateIntegrityError。成功返回摘要。"""
+        expected = (expected or "").strip().lower()
+        if not expected:
+            raise UpdateIntegrityError("缺少期望的 SHA256 校验值, 拒绝安装未校验的更新")
+        actual = sha256_file(path)
+        if actual != expected:
+            raise UpdateIntegrityError(f"SHA256 不匹配: 期望 {expected}, 实际 {actual}")
+        return actual
+
+    def get_checksum_url(self):
+        """从最新 Release assets 里找校验和文件, 返回 (name, url) 或 (None, None)。"""
+        if not self._latest_release:
+            return None, None
+        names = ('.sha256', '.sha256sums', '.sha256sum')
+        for a in self._latest_release.get('assets', []):
+            name = (a.get('name') or '')
+            low = name.lower()
+            if low.endswith(names) or low in ('sha256sums', 'checksums.txt', 'sha256.txt'):
+                return name, a.get('browser_download_url')
+        return None, None
+
+    def _expected_digest(self, asset_name):
+        """下载并解析 Release 的 SHA256 校验文件, 返回该 exe 的期望摘要(没有则 None)。"""
+        name, url = self.get_checksum_url()
+        if not url:
+            return None
+        try:
+            with self._open(url, timeout=20) as resp:
+                text = resp.read().decode('utf-8', 'replace')
+            table = parse_checksums(text, wanted=asset_name)
+            if '*' in table:
+                return table['*']
+            return table.get(asset_name)
+        except UpdateIntegrityError:
+            raise
+        except Exception as e:
+            print(f"[AutoUpdater] 获取校验值失败: {e}")
+            return None
 
     @property
     def api_url(self):
@@ -104,9 +249,9 @@ class AutoUpdater:
 
             req = urllib.request.Request(
                 self.api_url,
-                headers={'User-Agent': f'{self.app_name}-AutoUpdater/1.0'}
+                headers={'User-Agent': self._user_agent(self.app_name)}
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with self._open(req, timeout=10) as resp:
                 self._latest_release = json.loads(resp.read().decode('utf-8'))
 
             tag = self._latest_release.get('tag_name', '').replace('v', '')
@@ -188,9 +333,9 @@ class AutoUpdater:
         try:
             req = urllib.request.Request(
                 download_url,
-                headers={'User-Agent': f'{self.app_name}-AutoUpdater/1.0'}
+                headers={'User-Agent': self._user_agent(self.app_name)}
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with self._open(req, timeout=60) as resp:
                 total = int(resp.headers.get('Content-Length', 0))
                 downloaded = 0
                 chunk_size = 8192
@@ -206,6 +351,22 @@ class AutoUpdater:
                             progress_callback(downloaded, total)
 
             print(f"[AutoUpdater] 下载完成: {target_path}")
+
+            # 完整性校验（fail-closed）：取不到校验值或验不过, 就不进入安装
+            try:
+                expected = self._expected_digest(asset_name)
+            except UpdateIntegrityError as e:
+                print(f"[AutoUpdater] {e}")
+                return False
+            if expected:
+                try:
+                    self._verified_digest = self.verify_file(target_path, expected)
+                except UpdateIntegrityError as e:
+                    print(f"[AutoUpdater] 校验失败: {e}")
+                    return False
+            elif self.require_checksum:
+                print("[AutoUpdater] 未找到 SHA256 校验值, 已拒绝本次更新(fail-closed)")
+                return False
             return True
 
         except Exception as e:
@@ -231,6 +392,16 @@ class AutoUpdater:
             return False
 
         new_exe = str(exe_files[0])
+        # 安装前二次校验：下载时验过, 覆盖自身前再确认一次
+        if self.require_checksum:
+            if not self._verified_digest:
+                print("[AutoUpdater] 更新包未通过 SHA256 校验, 拒绝覆盖自身")
+                return False
+            try:
+                self.verify_file(new_exe, self._verified_digest)
+            except UpdateIntegrityError as e:
+                print(f"[AutoUpdater] 安装前校验失败: {e}")
+                return False
         current_exe = sys.executable if getattr(sys, 'frozen', False) else None
         if not current_exe:
             # 开发模式，使用当前脚本

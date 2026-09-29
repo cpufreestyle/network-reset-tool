@@ -4,6 +4,7 @@
 由 network_reset_gui.py 拆分而来; 对外通过 network_reset_gui 兼容入口暴露。
 本 __init__ 汇总并重新导出全部公共 API(含测试所需的下划线私有符号)。
 """
+from network_toolbox import i18n  # noqa: F401  (F12 界面多语言)
 from network_toolbox._shared import (  # noqa: F401
     ADAPTER_AUTO,
     APP_AUTHOR,
@@ -34,25 +35,36 @@ from network_toolbox._shared import (  # noqa: F401
     attach_tooltip,
     decode_output,
     dns_preset_tip,
+    http_user_agent,
     is_admin,
     is_valid_target,
     make_btn_style,
+    safe_after,
     styled_btn,
     ui_sync,
 )
 from network_toolbox.engine import (  # noqa: F401
     NetworkResetTool, NetworkDiagnostic, ProxyRepairTool,
+    HostsTool, PortTool, NetworkMonitor, SpeedTester, WifiTool,
+    run_cmd_capture,
 )
 from network_toolbox.report import (  # noqa: F401
     compute_health, collect_report_meta, _latency_text,
     render_report_html, render_report_text, render_report_markdown, render_report, open_path,
 )
 from network_toolbox.ui_panels import (  # noqa: F401
-    ResetPanel, DiagnosticPanel, ProxyPanel,
+    ResetPanel, DiagnosticPanel, ProxyPanel, PortsPanel, MonitorPanel,
+    SpeedPanel, WifiPanel, ResultPanel,
+)
+from network_toolbox.plugins import (  # noqa: F401  (F13 插件式诊断项)
+    DiagnosticItem, register_item, unregister_item, diagnostic_items,
+    custom_keys, run_diagnostics, reset_registry,
 )
 from network_toolbox.app import App  # noqa: F401
+from network_toolbox.cli import run_cli  # noqa: F401  (F10 命令行模式)
 
 __all__ = [
+    "i18n",
     "ADAPTER_AUTO",
     "APP_AUTHOR",
     "APP_NAME",
@@ -82,14 +94,22 @@ __all__ = [
     "attach_tooltip",
     "decode_output",
     "dns_preset_tip",
+    "http_user_agent",
     "is_admin",
     "is_valid_target",
     "make_btn_style",
+    "safe_after",
     "styled_btn",
     "ui_sync",
     "NetworkResetTool", "NetworkDiagnostic", "ProxyRepairTool",
+    "HostsTool", "PortTool", "NetworkMonitor", "SpeedTester", "WifiTool",
+    "run_cmd_capture",
     "compute_health", "collect_report_meta", "_latency_text",
     "render_report_html", "render_report_text", "render_report_markdown", "render_report", "open_path",
-    "ResetPanel", "DiagnosticPanel", "ProxyPanel",
+    "ResetPanel", "DiagnosticPanel", "ProxyPanel", "PortsPanel",
+    "MonitorPanel", "SpeedPanel", "WifiPanel", "ResultPanel",
     "App",
+    "run_cli",
+    "DiagnosticItem", "register_item", "unregister_item", "diagnostic_items",
+    "custom_keys", "run_diagnostics", "reset_registry",
 ]

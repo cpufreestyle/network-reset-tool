@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # 冒烟自检: 三平台跑无 GUI 部分(tests/smoke_test.py)
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 字节码编译全量检查
+        run: python -m compileall -q network_toolbox tests network_reset_gui.py auto_updater.py
+      - name: 冒烟自检
+        run: python tests/smoke_test.py
+
+  # GUI 自检(含 tooltip 全遍历): 仅 Windows, tkinter 开箱即用
+  smoke-gui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 冒烟自检 --gui
+        run: python tests/smoke_test.py --gui
+
+  # 打 tag(v*) 构建三平台产物; spec 内 upx=True, 镜像无 upx 时自动退化为 upx=False
+  build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [smoke, smoke-gui]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python-arch: x64
+            artifact: win-x64
+          - os: windows-latest
+            python-arch: x86
+            artifact: win7-x86
+          - os: macos-latest
+            python-arch: arm64
+            artifact: macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.python-arch }}
+      - name: 安装 UPX(尽力而为, 失败不阻塞)
+        shell: bash
+        continue-on-error: true
+        run: |
+          case "$RUNNER_OS" in
+            Windows) choco install upx -y --no-progress ;;
+            macOS) brew install upx ;;
+          esac
+      - name: PyInstaller 打包
+        shell: bash
+        run: |
+          python -m pip install --quiet pyinstaller
+          if command -v upx >/dev/null 2>&1; then
+            python -m PyInstaller "网络工具箱.spec" --noconfirm
+          else
+            # 镜像无 upx: 用 upx=False 的副本(upx 只影响体积, 不影响功能)
+            sed 's/upx=True/upx=False/' "网络工具箱.spec" > _ci.spec
+            python -m PyInstaller _ci.spec --noconfirm
+          fi
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: net-toolbox-${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error

@@ -3,6 +3,8 @@ build/
 dist/
 dist_new/
 *.spec
+# 例外: 正式打包配置必须入 git(CI 打 tag 构建依赖它)
+!网络工具箱.spec
 
 # Python
 __pycache__/
@@ -59,3 +61,6 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Agent scratch/handoff notes
+.workbuddy-ai/
