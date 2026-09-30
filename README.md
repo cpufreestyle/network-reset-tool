@@ -43,14 +43,14 @@
 
 | 版本 | 平台 | 文件 | 说明 |
 |:---:|:---:|:---:|:---|
-| v4.6.0 | Windows 10/11 64-bit | [网络工具箱.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.0/网络工具箱.exe) | GUI + CLI 一体（免安装，需管理员运行） |
-| v3.2 | Windows 10/11 64-bit | [网络工具箱.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_x64.exe) | GUI 图形界面版（免安装） |
+| v4.6.0 | Windows 10/11 64-bit | [NetworkToolbox_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.0/NetworkToolbox_x64.exe) | GUI + CLI 一体（免安装，需管理员运行） |
+| v3.2 | Windows 10/11 64-bit | [NetworkToolbox_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_x64.exe) | GUI 图形界面版（免安装） |
 | v3.2 | Windows 7 32-bit | [网络工具箱_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_win7_x86.exe) | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1.1 | Windows 7/8/10 32-bit | NetworkResetTool_v3_0_win7.exe | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v3.3 | macOS (源码运行) | network_reset_gui.py | 跨平台 GUI（代理修复 + DNS 刷新，需 sudo） |
-> v4.6.0 校验和（SHA256）：`F02896A1D70811E2EA2626887A42BBD0E07D56850FCDB9C9342AF2992D98DE5E` —— Release 内附 `SHA256SUMS.txt`，下载后可用 `Get-FileHash -Algorithm SHA256 网络工具箱.exe` 核对。
+> v4.6.0 校验和（SHA256）：`F02896A1D70811E2EA2626887A42BBD0E07D56850FCDB9C9342AF2992D98DE5E` —— Release 内附 `sha256sums.txt`，下载后可用 `Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe` 核对。
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 
