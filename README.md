@@ -51,7 +51,7 @@
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v3.3 | macOS (源码运行) | network_reset_gui.py | 跨平台 GUI（代理修复 + DNS 刷新，需 sudo） |
-> v4.6.0 校验和（SHA256）：`F02896A1D70811E2EA2626887A42BBD0E07D56850FCDB9C9342AF2992D98DE5E`、`8426D06319792129AFBDB8904752802381B9112DDE40998CAA0B15D0524B7266` —— Release 内附 `sha256sums.txt`（两行），下载后可用 `Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe`、`Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x86.exe` 逐个核对。
+> v4.6.0 校验和（SHA256）：`90A5629E1B4B526E49737925BC662E8C137C7F3689C0CFCBEC90CFCFCEF1B5C4`、`8426D06319792129AFBDB8904752802381B9112DDE40998CAA0B15D0524B7266` —— Release 内附 `sha256sums.txt`（两行），下载后可用 `Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe`、`Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x86.exe` 逐个核对。
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 
@@ -383,6 +383,7 @@ network-reset-tool/
   network-reset.bat         # Windows 命令行版(含端口查看 / WiFi 信息菜单)
   gen_version_info.py       # 从 APP_VERSION 生成 version_info.txt
   update_shortcut.py        # 刷新桌面快捷方式, 指向 dist/ 里最新的 exe
+  gen_icon.py               # 生成应用图标 icon.ico(圆角蓝底+地球网+健康徽标, 7 种尺寸)
   网络工具箱.spec           # PyInstaller 打包配置
   tests/smoke_test.py       # 冒烟自棅(413 项; --gui 合计 453 项)
   .github/workflows/ci.yml  # CI: 三平台 compileall + Windows 冒烟 / GUI 自检 + tag 构建三平台产物
