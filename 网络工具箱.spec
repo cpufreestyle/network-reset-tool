@@ -23,6 +23,7 @@ exe = EXE(
     a.datas,
     [],
     name='网络工具箱',
+    icon='icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
