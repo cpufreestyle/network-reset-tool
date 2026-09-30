@@ -624,9 +624,16 @@ def t_cli():
               "code=%s ok=%s" % (code, obj and obj["ok"]))
 
     # ---------- reset 的 JSON 里必须带退出码, 否则调用方看不出是权限问题 ----------
-    so, se = io.StringIO(), io.StringIO()
-    with contextlib.redirect_stdout(so), contextlib.redirect_stderr(se):
-        code = C.run_cli(["reset", "--json"])
+    # is_admin 必须打假: GitHub Actions 的 Windows runner 默认就是管理员,
+    # 不 mock 的话 reset 会真的跑完整重置, ok 变 True, 这条断言永远不成立。
+    real_is_admin = C.is_admin
+    C.is_admin = lambda: False
+    try:
+        so, se = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(so), contextlib.redirect_stderr(se):
+            code = C.run_cli(["reset", "--json"])
+    finally:
+        C.is_admin = real_is_admin
     obj = _json.loads(so.getvalue())
     check("reset 失败时 JSON 带 exit_code",
           obj["ok"] is False and isinstance(obj["data"].get("exit_code"), int)
@@ -685,7 +692,7 @@ def t_cli():
     real_render = C.render_report
     try:
         C.render_report = lambda results, fmt: ("ROCKS 报告正文", "utf-8")
-        so, se = _io.StringIO(), _io.StringIO()
+        so, se = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(so), contextlib.redirect_stderr(se):
             code = C.run_cli(["report", "--json"])
         raw = so.getvalue()
