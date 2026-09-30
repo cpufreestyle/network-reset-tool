@@ -13,7 +13,7 @@
 
 修复网络连接问题 · 重置 Winsock/TCP/IP · 清除 DNS/ARP 缓存 · 网络诊断（Ping/DNS/Traceroute）
 
-[下载 exe](#下载) · [GitHub Release v3.3](https://github.com/cpufreestyle/network-reset-tool/releases/tag/v3.3) · [报告问题](https://gitee.com/cpufreestyle/network-reset-tool/issues) · [使用说明](#使用方法)
+[下载 exe](#下载) · [GitHub Release v4.6.0](https://github.com/cpufreestyle/network-reset-tool/releases/tag/v4.6.0) · [报告问题](https://gitee.com/cpufreestyle/network-reset-tool/issues) · [使用说明](#使用方法)
 
 ---
 
@@ -43,12 +43,14 @@
 
 | 版本 | 平台 | 文件 | 说明 |
 |:---:|:---:|:---:|:---|
+| v4.6.0 | Windows 10/11 64-bit | [网络工具箱.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.0/网络工具箱.exe) | GUI + CLI 一体（免安装，需管理员运行） |
 | v3.2 | Windows 10/11 64-bit | [网络工具箱.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_x64.exe) | GUI 图形界面版（免安装） |
 | v3.2 | Windows 7 32-bit | [网络工具箱_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_win7_x86.exe) | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1.1 | Windows 7/8/10 32-bit | NetworkResetTool_v3_0_win7.exe | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v3.3 | macOS (源码运行) | network_reset_gui.py | 跨平台 GUI（代理修复 + DNS 刷新，需 sudo） |
+> v4.6.0 校验和（SHA256）：`F02896A1D70811E2EA2626887A42BBD0E07D56850FCDB9C9342AF2992D98DE5E` —— Release 内附 `SHA256SUMS.txt`，下载后可用 `Get-FileHash -Algorithm SHA256 网络工具箱.exe` 核对。
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 
@@ -390,9 +392,10 @@ network-reset-tool/
 
 ## 技术栈
 
-- **Windows GUI**: Python 3 + Tkinter + ctypes
-- **macOS GUI**: Python 3 + Tkinter + networksetup
-- **CLI**: Windows Batch + PowerShell
+- **Windows GUI**: Python 3.11 + Tkinter + ctypes
+- **macOS GUI**: Python 3.11 + Tkinter + networksetup
+- **CLI**: Python 3.11（argparse，`--json` 机器可读输出）+ Batch 菜单脚本
+- **测试**: `tests/smoke_test.py` 冒烟自检 413 项，`--gui` 合计 453 项
 
 ## 常见问题
 
