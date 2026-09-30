@@ -51,7 +51,7 @@
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v3.3 | macOS (源码运行) | network_reset_gui.py | 跨平台 GUI（代理修复 + DNS 刷新，需 sudo） |
-> v4.6.0 校验和（SHA256）：`90A5629E1B4B526E49737925BC662E8C137C7F3689C0CFCBEC90CFCFCEF1B5C4`、`8426D06319792129AFBDB8904752802381B9112DDE40998CAA0B15D0524B7266` —— Release 内附 `sha256sums.txt`（两行），下载后可用 `Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe`、`Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x86.exe` 逐个核对。
+> v4.6.0 校验和（SHA256）：`90A5629E1B4B526E49737925BC662E8C137C7F3689C0CFCBEC90CFCFCEF1B5C4`、`755F3A9DCC6E080408E5D7292D192F76DDCBA70E7E5A4A40E64B4E36C8FC922E` —— Release 内附 `sha256sums.txt`（两行），下载后可用 `Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe`、`Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x86.exe` 逐个核对。
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 
@@ -398,6 +398,7 @@ network-reset-tool/
 - **Windows GUI**: Python 3.11 + Tkinter + ctypes
 - **macOS GUI**: Python 3.11 + Tkinter + networksetup
 - **CLI**: Python 3.11（argparse，`--json` 机器可读输出）+ Batch 菜单脚本
+- **打包**: PyInstaller（`网络工具箱.spec` 入 git）+ 自定义图标 `gen_icon.py`（圆角蓝底 + 地球网 + 健康徽标，7 种尺寸）
 - **测试**: `tests/smoke_test.py` 冒烟自检 413 项，`--gui` 合计 453 项
 
 ## 常见问题
