@@ -51,7 +51,7 @@
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v3.3 | macOS (源码运行) | network_reset_gui.py | 跨平台 GUI（代理修复 + DNS 刷新，需 sudo） |
-> v4.6.0 校验和（SHA256）：`F02896A1D70811E2EA2626887A42BBD0E07D56850FCDB9C9342AF2992D98DE5E`、`8426D06319792129AFBDB8904752802381B9112DDE40998CAA0B15D0524B7266` —— Release 内附 `sha256sums.txt`（两行），下载后可用 `Get-FileHash -Algorithm SHA256 <文件名>` 逐个核对。
+> v4.6.0 校验和（SHA256）：`F02896A1D70811E2EA2626887A42BBD0E07D56850FCDB9C9342AF2992D98DE5E`、`8426D06319792129AFBDB8904752802381B9112DDE40998CAA0B15D0524B7266` —— Release 内附 `sha256sums.txt`（两行），下载后可用 `Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe`、`Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x86.exe` 逐个核对。
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 
