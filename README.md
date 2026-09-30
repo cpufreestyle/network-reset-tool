@@ -381,9 +381,10 @@ network-reset-tool/
   auto_updater.py           # 自动更新(SHA256 + 域名白名单)
   network-reset.bat         # Windows 命令行版(含端口查看 / WiFi 信息菜单)
   gen_version_info.py       # 从 APP_VERSION 生成 version_info.txt
+  update_shortcut.py        # 刷新桌面快捷方式, 指向 dist/ 里最新的 exe
   网络工具箱.spec           # PyInstaller 打包配置
   tests/smoke_test.py       # 冒烟自棅(413 项; --gui 合计 453 项)
-  .github/workflows/ci.yml  # CI: 三平台冒烟 + GUI 自检 + tag 构建三平台产物
+  .github/workflows/ci.yml  # CI: 三平台 compileall + Windows 冒烟 / GUI 自检 + tag 构建三平台产物
   legacy/                   # 归档: 旧 macOS 单文件脚本
   .gitignore
   LICENSE

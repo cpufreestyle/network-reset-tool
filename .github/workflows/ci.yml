@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: 字节码编译全量检查
-        run: python -m compileall -q network_toolbox tests network_reset_gui.py auto_updater.py
+        run: python -m compileall -q network_toolbox tests network_reset_gui.py auto_updater.py update_shortcut.py gen_version_info.py
       # 三平台都跑：最快发现语法 / import 级别的跨平台破坏
       # 冒烟自棅是 Windows 定向的套件（GBK 控制台 / netsh / Tk 控件 / Windows 退出码），
       # 只在 Windows 上跑；其它平台由上面的 compileall 兑底
