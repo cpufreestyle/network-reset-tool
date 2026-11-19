@@ -52,7 +52,6 @@
 | v4.6.2 | Windows 7 32-bit | [NetworkToolbox_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.2/NetworkToolbox_win7_x86.exe) | GUI + CLI 一体（Win7 兼容、免安装，Python 3.8） |
 | v4.6.2 | Windows 7 64-bit | [NetworkToolbox_win7_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.2/NetworkToolbox_win7_x64.exe) | GUI + CLI 一体（Win7 兼容、免安装，Python 3.8） |
 | v4.6.3 | Windows 10/11 64-bit | [NetworkToolbox_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.3/NetworkToolbox_x64.exe) | GUI + CLI 一体（自动更新修复，Python 3.13） |
-| v4.6.3 | Windows 7 32-bit | [NetworkToolbox_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.3/NetworkToolbox_win7_x86.exe) | GUI + CLI 一体（Win7 兼容，自动更新修复，Python 3.8） |
 | v4.6.3 | Windows 7 64-bit | [NetworkToolbox_win7_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.3/NetworkToolbox_win7_x64.exe) | GUI + CLI 一体（Win7 兼容，自动更新修复，Python 3.8） |
 | v3.2 | Windows 10/11 64-bit | [NetworkToolbox_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_x64.exe) | GUI 图形界面版（免安装） |
 | v3.2 | Windows 7 32-bit | [网络工具箱_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_win7_x86.exe) | GUI 图形界面版（Win7 兼容、免安装） |
@@ -60,7 +59,7 @@
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v3.3 | macOS (源码运行) | network_reset_gui.py | 跨平台 GUI（代理修复 + DNS 刷新，需 sudo） |
-> v4.6.3 校验和（SHA256）：`63AA7CD454D17A1BC8BAABCC979F979A4CB14930D5D26B9FDA9DCF05664191A8`（Win10/11 x64）、`5D8489AA27DF24DB47D8555C0EE4D6D969959B074EC66AB4D39474B3705B2BDD`（Win7 x86，CI 构建完成后更新）、`3338D06D04C87D06EA2892C2D44740386329AA819BE96467AF9A202E0C6EA1F5`（Win7 x64）—— Release 内附 `sha256sums.txt`，可用 `Get-FileHash -Algorithm SHA256 <文件名>` 逐个核对。
+> v4.6.3 校验和（SHA256）：`63AA7CD454D17A1BC8BAABCC979F979A4CB14930D5D26B9FDA9DCF05664191A8`（Win10/11 x64）、`3338D06D04C87D06EA2892C2D44740386329AA819BE96467AF9A202E0C6EA1F5`（Win7 x64）—— Release 内附 `sha256sums.txt`，可用 `Get-FileHash -Algorithm SHA256 <文件名>` 逐个核对。Win7 32-bit 用户继续使用 v4.6.2 的 `NetworkToolbox_win7_x86.exe`。
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 

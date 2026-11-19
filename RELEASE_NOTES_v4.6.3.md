@@ -7,8 +7,8 @@
 
 ## Downloads
 - `NetworkToolbox_x64.exe` — Windows 10/11 x64, Python 3.13.
-- `NetworkToolbox_win7_x86.exe` — Windows 7 x86, Python 3.8.
 - `NetworkToolbox_win7_x64.exe` — Windows 7 x64, Python 3.8.
+- Windows 7 x86 users should continue using `NetworkToolbox_win7_x86.exe` from v4.6.2; the v4.6.3 CI x86 artifact still uses Python 3.11 and is not published as Win7-compatible.
 
 See `sha256sums.txt` for SHA256 checksums.
 

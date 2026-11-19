@@ -13,6 +13,9 @@ __pycache__/
 build_win7x64/
 build_win10/
 dist_win10/
+build_v463_win10/
+build_v463_win7x64/
+dist_v463/
 dist_win7x64/
 *.py[cod]
 *.class
