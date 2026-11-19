@@ -155,7 +155,11 @@ def _run_overview(tool, progress=None):
 
 
 def _run_ping(tool, progress=None):
-    """内置项 ping：对 PING_TARGETS 逐个 ping，进度占 10%~50%。"""
+    """内置项 ping：对 PING_TARGETS 逐个 ping，进度占 10%~50%。
+
+    每个目标只发 1 个包、最多等 1 秒。旧版用 4 包/默认 4 秒超时，
+    一个不可达目标就能拖 15 秒，整轮诊断要一分多钟。
+    """
     rows = []
     targets = tool.PING_TARGETS
     total = len(targets) or 1
@@ -164,7 +168,7 @@ def _run_ping(tool, progress=None):
         if progress:
             progress(int((i / total) * 40) + 10, "Ping %s..." % label)
         try:
-            ok, avg_ms, loss, _ = tool.ping(target)
+            ok, avg_ms, loss, output = tool.ping(target)
             rows.append({
                 'target': target,
                 'label': label,
@@ -172,6 +176,7 @@ def _run_ping(tool, progress=None):
                 'ok': ok,
                 'avg_ms': avg_ms,
                 'loss': loss,
+                'output': output,
             })
         except Exception as exc:
             rows.append({
@@ -190,7 +195,7 @@ def _run_dns(tool, progress=None):
     """内置项 dns：各 DNS 服务器解析同一域名，进度占 55%~95%。"""
     rows = []
     test_host = "www.baidu.com"
-    targets = tool.DNS_TARGETS
+    targets = tool.DNS_TARGETS or [("System", tr("系统 DNS"))]
     total = len(targets) or 1
     for i, (dns, label) in enumerate(targets):
         label = tr(label)

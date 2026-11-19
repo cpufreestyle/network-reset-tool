@@ -17,6 +17,8 @@ import html as _html
 import shutil
 from datetime import datetime
 import socket
+import ctypes
+import math
 import urllib.request
 import urllib.error
 
@@ -43,17 +45,20 @@ from network_toolbox._shared import (
     _am_first,
     _app_data_dir,
     _apply_proxy_setting,
+    _init_subprocess_defaults,
     _init_font,
     _is_mothers_day,
     _is_win7_or_older,
     _mac_primary_service,
     _release_singleton,
     decode_output,
+    default_gateway,
     http_user_agent,
     is_admin,
     is_valid_target,
     make_btn_style,
     styled_btn,
+    run_subprocess,
     ui_sync,
 )
 
@@ -66,7 +71,7 @@ def run_cmd_capture(args, timeout=15):
     返回 (returncode, stdout, stderr)；解码沿用 decode_output 的链路。
     """
     try:
-        proc = subprocess.run(list(args), capture_output=True, timeout=timeout)
+        proc = run_subprocess(list(args), timeout=timeout)
         return proc.returncode, decode_output(proc.stdout), decode_output(proc.stderr)
     except Exception as e:
         return -1, "", str(e)
@@ -87,8 +92,8 @@ class NetworkResetTool:
 
     def run_cmd(self, cmd, show_output=False, timeout=10):
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True,
-                                   encoding='gbk', errors='ignore', timeout=timeout)
+            result = run_subprocess(cmd, shell=True, text=True,
+                                    encoding='gbk', errors='ignore', timeout=timeout)
             if show_output and result.stdout:
                 self.log(result.stdout.strip())
             return result.returncode == 0
@@ -150,7 +155,7 @@ Write-Output ($out -join "`n")
         raw = ''
         try:
             if not _is_win7_or_older():
-                r = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_modern],
+                r = run_subprocess(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_modern],
                                    capture_output=True, timeout=15)
                 raw = decode_output(r.stdout)
         except Exception:
@@ -169,7 +174,7 @@ foreach ($c in (Get-WmiObject Win32_NetworkAdapterConfiguration -ErrorAction Sil
 Write-Output ($out -join "`n")
 '''
             try:
-                r = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_wmi],
+                r = run_subprocess(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_wmi],
                                    capture_output=True, timeout=15)
                 raw = decode_output(r.stdout)
             except Exception:
@@ -236,7 +241,7 @@ foreach ($c in (Get-WmiObject Win32_NetworkAdapterConfiguration -ErrorAction Sil
 Write-Output ($out -join "`n")
 '''
         try:
-            r = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps],
+            r = run_subprocess(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps],
                                capture_output=True, timeout=20)
             raw = decode_output(r.stdout)
         except Exception as e:
@@ -397,7 +402,7 @@ if ($adapters) {
 }
 '''
         try:
-            result = subprocess.run(['powershell', '-NoProfile', '-Command', ps_script],
+            result = run_subprocess(['powershell', '-NoProfile', '-Command', ps_script],
                                    capture_output=True, timeout=10)
             stdout = self._decode_output(result.stdout)
             if stdout.strip():
@@ -598,7 +603,7 @@ foreach ($a in $adapters) {
 }
 '''
         try:
-            result = subprocess.run(['powershell', '-NoProfile', '-NonInteractive',
+            result = run_subprocess(['powershell', '-NoProfile', '-NonInteractive',
                                      '-Command', ps_script],
                                    capture_output=True, timeout=10)
             stdout = self._decode_output(result.stdout)
@@ -759,7 +764,7 @@ class NetworkDiagnostic:
         if not IS_WINDOWS:
             return ""
         try:
-            result = subprocess.run(
+            result = run_subprocess(
                 ['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
                 capture_output=True, text=False, timeout=timeout
             )
@@ -869,16 +874,82 @@ if ($adapters) {
 
     def get_overview(self):
         """自动选择 Win7/Win8+ 命令获取网络状态总览"""
-        if _is_win7_or_older():
-            return self._get_overview_legacy()
-        results = self._get_overview_modern()
+        results = []
+        if IS_WINDOWS and not _is_win7_or_older():
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                from ctypes import Structure
+
+                class IpAddrString(Structure):
+                    _fields_ = [
+                        ('Next', ctypes.POINTER(IpAddrString)),
+                        ('IpAddress', ctypes.c_wchar * 16),
+                        ('IpMask', ctypes.c_wchar * 16),
+                        ('Context', wintypes.DWORD),
+                    ]
+
+                class AdapterInfo(Structure):
+                    _fields_ = [
+                        ('Next', ctypes.POINTER(AdapterInfo)),
+                        ('ComboIndex', wintypes.DWORD),
+                        ('AdapterName', ctypes.c_char * 256),
+                        ('Description', ctypes.c_char * 128),
+                        ('AddressLength', wintypes.UINT),
+                        ('Address', ctypes.c_ubyte * 8),
+                        ('Index', wintypes.DWORD),
+                        ('Type', wintypes.UINT),
+                        ('DhcpEnabled', wintypes.UINT),
+                        ('CurrentIpAddress', ctypes.c_void_p),
+                        ('IpAddressList', IpAddrString),
+                        ('GatewayList', IpAddrString),
+                        ('DhcpServer', IpAddrString),
+                        ('HaveWins', wintypes.BOOL),
+                        ('PrimaryWinsServer', IpAddrString),
+                        ('SecondaryWinsServer', IpAddrString),
+                        ('LeaseObtained', ctypes.c_int64),
+                        ('LeaseExpires', ctypes.c_int64),
+                    ]
+
+                api = ctypes.WinDLL('iphlpapi', use_last_error=True)
+                api.GetAdaptersInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG)]
+                api.GetAdaptersInfo.restype = ctypes.c_int
+                size = wintypes.ULONG(0)
+                api.GetAdaptersInfo(None, ctypes.byref(size))
+                buf = ctypes.create_string_buffer(size.value)
+                if api.GetAdaptersInfo(buf, ctypes.byref(size)) == 0:
+                    adapter = ctypes.cast(buf, ctypes.POINTER(AdapterInfo))
+                    gateway = default_gateway()
+                    while adapter:
+                        info = adapter.contents
+                        name = info.Description.split(b'\x00', 1)[0].decode(
+                            'utf-8', errors='replace')
+                        entry = info.IpAddressList
+                        while True:
+                            ip = entry.IpAddress.split('\x00', 1)[0]
+                            if ip and ip != '0.0.0.0':
+                                results.append(('状态', 'up'))
+                                results.append(('接口', name))
+                                results.append(('IPv4', ip))
+                                if gateway:
+                                    results.append(('网关', gateway))
+                                break
+                            if not entry.Next:
+                                break
+                            entry = entry.Next.contents
+                        if results:
+                            break
+                        adapter = info.Next
+            except Exception:
+                results = []
         if not results:
             results = self._get_overview_legacy()
         return results
 
     # 解码统一走模块级 decode_output（BOM/UTF-16 特征探测，避免 UTF-8 被误判成 GBK）
 
-    def ping(self, target, count=4):
+    def ping(self, target, count=4, timeout_ms=None):
         """Ping 一个目标，返回 (ok, avg_ms, loss_pct, output)
 
         修复要点：
@@ -891,13 +962,16 @@ if ($adapters) {
         try:
             if IS_WINDOWS:
                 argv = ['ping', '-n', str(int(count)), target]
-                timeout = 6 + 2 * int(count)
+                if timeout_ms is None:
+                    timeout_ms = 3000
+                argv += ['-w', str(int(timeout_ms))]
+                timeout = max(2, int(count) * (int(timeout_ms) / 1000 + 1))
             else:
                 argv = ['ping', '-c', str(int(count)), '-W', '2000', target] \
                     if not IS_MAC else ['ping', '-c', str(int(count)), '-t', '2', target]
                 timeout = 6 + 2 * int(count)
 
-            proc = subprocess.run(argv, capture_output=True, timeout=timeout)
+            proc = run_subprocess(argv, timeout=timeout)
             output = decode_output(proc.stdout) or decode_output(proc.stderr)
             if not output.strip():
                 return False, None, 100, tr("(无输出)")
@@ -918,6 +992,10 @@ if ($adapters) {
                               r'[\d.]+/([\d.]+)/[\d.]+', output, re.I)
                 if m:
                     avg_ms = int(float(m.group(1)))
+                if avg_ms is None:
+                    m = re.search(r'(?:time|时间)[=<]\s*(\d+(?:\.\d+)?)\s*ms', output, re.I)
+                    if m:
+                        avg_ms = int(float(m.group(1)))
 
             # ---- 丢包率 ----
             loss = 0
@@ -969,10 +1047,12 @@ if ($adapters) {
     def _dns_lookup_nslookup(self, target, dns_server=None):
         """跨平台回退方案：nslookup（Win7 / macOS / Linux 均可用）"""
         argv = ['nslookup', target]
+        if IS_WINDOWS:
+            argv += ['-retry:0', '-timeout:1']
         if dns_server:
             argv.append(dns_server)
         try:
-            proc = subprocess.run(argv, capture_output=True, timeout=12)
+            proc = run_subprocess(argv, timeout=12)
             output = decode_output(proc.stdout) or decode_output(proc.stderr)
             return self._parse_nslookup(output, dns_server)
         except subprocess.TimeoutExpired:
@@ -983,34 +1063,28 @@ if ($adapters) {
             return False, None, str(e)
 
     def dns_lookup(self, target, dns_server=None):
-        """DNS 解析测试
+        """DNS 解析测试。
 
-        Win8+ 走 Resolve-DnsName，其余（Win7 / macOS / Linux）走 nslookup，
-        任一路径失败自动回退。解析结果会剔除 DNS 服务器自身 IP，避免"假成功"。
+        不指定服务器时走系统解析器（DNS 缓存 + 当前配置的 DNS），
+        毫秒级返回；指定服务器时才走 nslookup，并限制为 1 次尝试/1 秒超时。
         """
         if not is_valid_target(target):
             return False, None, f"目标地址非法: {target!r}"
         if dns_server and not _IPV4_RE.match(dns_server):
             return False, None, f"DNS 服务器地址非法: {dns_server!r}"
 
-        if IS_WINDOWS and not _is_win7_or_older():
+        if not dns_server:
             try:
-                server_opt = f" -Server {dns_server}" if dns_server else ""
-                ps_script = (f"Resolve-DnsName {target} -DnsOnly{server_opt} "
-                             f"-ErrorAction Stop | Select-Object IPAddress,NameHost | Format-List")
-                result = subprocess.run(
-                    ['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_script],
-                    capture_output=True, timeout=12
-                )
-                output = decode_output(result.stdout)
-                ips = [a for a in re.findall(r'\b\d{1,3}(?:\.\d{1,3}){3}\b', output)
-                       if a != dns_server]
-                failed = ("can't find" in output.lower() or '找不到' in output
-                          or 'Resolve-DnsName' in output and not ips)
-                if ips and not failed:
-                    return True, ips[0], output
-            except Exception:
-                pass  # 落到 nslookup
+                answers = socket.getaddrinfo(target, None, socket.AF_INET)
+                ips = []
+                for answer in answers:
+                    ip = answer[4][0]
+                    if ip not in ips:
+                        ips.append(ip)
+                if ips:
+                    return True, ips[0], ", ".join(ips)
+            except Exception as exc:
+                return False, None, f"DNS 解析失败: {exc}"
 
         return self._dns_lookup_nslookup(target, dns_server)
 
@@ -1074,7 +1148,7 @@ if ($adapters) {
         else:
             argv = ['traceroute', '-n', '-m', '30', '-w', '2', target]
         try:
-            proc = subprocess.run(argv, capture_output=True, timeout=90)
+            proc = run_subprocess(argv, timeout=90)
             output = decode_output(proc.stdout)
             if not output.strip():
                 output = decode_output(proc.stderr)
@@ -1288,7 +1362,7 @@ class ProxyRepairTool:
                   'Select-Object LocalPort,OwningProcess | '
                   'ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; '
                   'if ($p) { Write-Output ($_.LocalPort.ToString() + ":" + $p.Name) } }')
-            out = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
+            out = run_subprocess(['powershell', '-NoProfile', '-Command', ps],
                                  capture_output=True, timeout=15).stdout
             out = out.decode('utf-8', errors='replace')
             for line in out.splitlines():

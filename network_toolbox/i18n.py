@@ -239,6 +239,7 @@ EN = {
     '修复完成!': 'Repair complete!',
     '修改 hosts 需要管理员权限：请以管理员身份运行': 'Editing hosts needs administrator: please run as administrator',
     '全部 DNS 均失败': 'All DNS servers failed',
+    '系统 DNS': 'System DNS',
     '关键内容': 'Key content',
     '写入失败(可能需要管理员权限): ': 'Write failed (administrator may be required): ',
     '分钟': 'min',

@@ -21,6 +21,7 @@ import platform
 import html as _html
 from datetime import datetime
 import socket
+import ipaddress
 
 _SINGLETON_PORT = 45678  # 固定端口
 
@@ -58,6 +59,191 @@ IS_WINDOWS = sys.platform.startswith("win")
 IS_MAC = sys.platform == "darwin"
 
 IS_LINUX = sys.platform.startswith("linux")
+
+_SUBPROCESS_DEFAULTS = {}
+_gateway_cache = {}
+
+
+def _no_window_flags():
+    """Windows 下隐藏所有子进程控制台窗口（GUI 里每个命令都不该闪黑框）。"""
+    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    if IS_WINDOWS and not flags:
+        flags = 0x08000000
+    return flags
+
+
+def _no_window_startupinfo():
+    """再给 STARTUPINFO 显式设隐藏，覆盖 shell=True 场景的控制台窗口。"""
+    if not IS_WINDOWS:
+        return None
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+    return startupinfo
+
+
+def _init_subprocess_defaults():
+    """测试可调用此函数刷新默认值（例如打桩 IS_WINDOWS 后）。"""
+    global _SUBPROCESS_DEFAULTS
+    _SUBPROCESS_DEFAULTS = {
+        'creationflags': _no_window_flags(),
+        'startupinfo': _no_window_startupinfo(),
+    }
+
+
+_init_subprocess_defaults()
+
+
+def run_subprocess(args, *, capture_output=True, text=False, encoding=None,
+                   errors=None, timeout=None, shell=False, check=False, **kwargs):
+    """subprocess.run 的全平台静默入口；GUI 调用一律走这里，禁止闪黑框。"""
+    for key, value in _SUBPROCESS_DEFAULTS.items():
+        kwargs.setdefault(key, value)
+    return subprocess.run(args, capture_output=capture_output, text=text,
+                          encoding=encoding, errors=errors, timeout=timeout,
+                          shell=shell, check=check, **kwargs)
+
+
+def system_dns_servers():
+    """返回本机 DNS 服务器 IPv4（Windows 直读 GetAdaptersInfo，不启子进程）。"""
+    servers = []
+    if IS_WINDOWS:
+        try:
+            from ctypes import wintypes
+
+            class IpAddrString(ctypes.Structure):
+                pass
+
+            IpAddrString._fields_ = [
+                ('Next', ctypes.POINTER(IpAddrString)),
+                ('IpAddress', ctypes.c_wchar * 16),
+                ('IpMask', ctypes.c_wchar * 16),
+                ('Context', wintypes.DWORD),
+            ]
+
+            class AdapterInfo(ctypes.Structure):
+                pass
+
+            AdapterInfo._fields_ = [
+                ('Next', ctypes.POINTER(AdapterInfo)),
+                ('ComboIndex', wintypes.DWORD),
+                ('AdapterName', ctypes.c_char * 256),
+                ('Description', ctypes.c_char * 128),
+                ('AddressLength', wintypes.UINT),
+                ('Address', ctypes.c_ubyte * 8),
+                ('Index', wintypes.DWORD),
+                ('Type', wintypes.UINT),
+                ('DhcpEnabled', wintypes.UINT),
+                ('CurrentIpAddress', ctypes.c_void_p),
+                ('IpAddressList', IpAddrString),
+                ('GatewayList', IpAddrString),
+                ('DhcpServer', IpAddrString),
+                ('HaveWins', wintypes.BOOL),
+                ('PrimaryWinsServer', IpAddrString),
+                ('SecondaryWinsServer', IpAddrString),
+                ('LeaseObtained', ctypes.c_int64),
+                ('LeaseExpires', ctypes.c_int64),
+            ]
+
+            size = wintypes.ULONG(0)
+            api = ctypes.WinDLL('iphlpapi', use_last_error=True)
+            api.GetAdaptersInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG)]
+            api.GetAdaptersInfo.restype = ctypes.c_int
+            api.GetAdaptersInfo(None, ctypes.byref(size))
+            if size.value:
+                buf = ctypes.create_string_buffer(size.value)
+                if api.GetAdaptersInfo(buf, ctypes.byref(size)) == 0:
+                    adapter = ctypes.cast(buf, ctypes.POINTER(AdapterInfo))
+                    while adapter:
+                        entry = adapter.contents.DhcpServer
+                        address = entry.IpAddress.split('\x00', 1)[0]
+                        if address and address not in ('0.0.0.0',):
+                            servers.append(address)
+                        adapter = adapter.contents.Next
+        except Exception:
+            pass
+    else:
+        try:
+            raw = run_subprocess(['cat', '/etc/resolv.conf'], timeout=3).stdout
+            text = raw.decode('utf-8', errors='replace') if isinstance(raw, bytes) else raw
+            for line in text.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == 'nameserver':
+                    servers.append(parts[1])
+        except Exception:
+            pass
+
+    unique = []
+    for address in servers:
+        try:
+            ipaddress.IPv4Address(address)
+        except ValueError:
+            continue
+        if address not in ('127.0.0.1', '0.0.0.0') and address not in unique:
+            unique.append(address)
+    return unique[:3]
+
+
+def default_gateway():
+    """返回默认网关 IPv4（从路由表 API 读，不启动 PowerShell）。"""
+    cached = _gateway_cache.get('value')
+    if cached is not None:
+        return cached
+    if not IS_WINDOWS:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        api = ctypes.WinDLL('iphlpapi', use_last_error=True)
+        get_table = api.GetIpForwardTable
+        get_table.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG), wintypes.BOOL]
+        get_table.restype = ctypes.c_int
+        size = wintypes.ULONG(0)
+        get_table(None, ctypes.byref(size), False)
+        if not size.value:
+            return None
+        buf = ctypes.create_string_buffer(size.value)
+        result = get_table(buf, ctypes.byref(size), False)
+        if result != 0:
+            return None
+        count = int.from_bytes(buf.raw[:4], 'little')
+        offset = 4
+        best = None
+        row_struct = _ip_forward_row_struct()
+        for _ in range(count):
+            row = ctypes.cast(ctypes.byref(buf, offset), ctypes.POINTER(row_struct)).contents
+            if row.ForwardDest == 0 and row.ForwardMask == 0:
+                hop = socket.inet_ntoa(row.ForwardNextHop.to_bytes(4, 'little'))
+                metric = row.ForwardMetric[0]
+                if hop != '0.0.0.0' and (best is None or metric < best[0]):
+                    best = (metric, hop)
+            offset += ctypes.sizeof(row_struct)
+        value = best[1] if best else None
+        _gateway_cache['value'] = value
+        return value
+    except Exception:
+        return None
+
+
+def _ip_forward_row_struct():
+    from ctypes import wintypes
+
+    class IpForwardRow(ctypes.Structure):
+        _fields_ = [
+            ('ForwardDest', wintypes.DWORD),
+            ('ForwardMask', wintypes.DWORD),
+            ('ForwardPolicy', wintypes.DWORD),
+            ('ForwardNextHop', wintypes.DWORD),
+            ('ForwardIfIndex', wintypes.DWORD),
+            ('ForwardType', wintypes.DWORD),
+            ('ForwardProto', wintypes.DWORD),
+            ('ForwardAge', wintypes.DWORD),
+            ('ForwardNextHopAS', wintypes.DWORD),
+            ('ForwardMetric', wintypes.DWORD * 5),
+        ]
+
+    return IpForwardRow
 
 def is_admin():
     if IS_WINDOWS:
@@ -183,7 +369,7 @@ COLORS = dict(THEMES[DEFAULT_THEME])
 
 APP_NAME = "网络工具箱"
 
-APP_VERSION = "4.6.0"
+APP_VERSION = "4.6.1"
 
 APP_AUTHOR = "michaelqiu"
 
