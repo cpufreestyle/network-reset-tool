@@ -22,10 +22,13 @@ v4.6.0 的修复维护版：网络诊断中的命令子进程不再逐个闪出�
 
 | 文件 | 平台 | SHA256 |
 |:---|:---|:---|
-| `NetworkToolbox_x64.exe` | Windows 10/11 64-bit | `44BB09B5B830EA825E46AF5536E64E217AA2613B62AB6A3A7189A96F2215E8A1` |
+| `NetworkToolbox_x64.exe` | Windows 10/11 64-bit | `B870D1D06062900EC16B2C3604AE12E93992E8F136E9C9FA6F65B49B937CCED2` |
+| `NetworkToolbox_win7_x86.exe` | Windows 7 32-bit | `5D8489AA27DF24DB47D8555C0EE4D6D969959B074EC66AB4D39474B3705B2BDD` |
 
 ```powershell
 Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe
+Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x86.exe
 ```
 
-> 本版本仅提供 x64 便携版。Win7 32-bit 用户请继续使用 v4.6.0 的 `NetworkToolbox_win7_x86.exe`。
+> - 窗口标题显示完整版本号 `v4.6.1`。
+> - Windows GUI 版需**以管理员身份运行**才能使用全部功能；x64 与 Win7 32-bit 版均已内嵌 `requireAdministrator` 清单，双击自动触发 UAC。
