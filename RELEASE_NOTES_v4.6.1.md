@@ -24,11 +24,14 @@ v4.6.0 的修复维护版：网络诊断中的命令子进程不再逐个闪出�
 |:---|:---|:---|
 | `NetworkToolbox_x64.exe` | Windows 10/11 64-bit | `B870D1D06062900EC16B2C3604AE12E93992E8F136E9C9FA6F65B49B937CCED2` |
 | `NetworkToolbox_win7_x86.exe` | Windows 7 32-bit | `5D8489AA27DF24DB47D8555C0EE4D6D969959B074EC66AB4D39474B3705B2BDD` |
+| `NetworkToolbox_win7_x64.exe` | Windows 7 64-bit | `6A08FB7D0C939C196A42F1A05A8D633AC8B86092DD260294019C4C6B6C1BA107` |
 
 ```powershell
 Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe
 Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x86.exe
+Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x64.exe
 ```
 
 > - 窗口标题显示完整版本号 `v4.6.1`。
 > - Windows GUI 版需**以管理员身份运行**才能使用全部功能；x64 与 Win7 32-bit 版均已内嵌 `requireAdministrator` 清单，双击自动触发 UAC。
+> - `NetworkToolbox_x64.exe` 使用 Python 3.13 构建，适用于 Windows 10/11；`NetworkToolbox_win7_x86.exe` 与 `NetworkToolbox_win7_x64.exe` 使用 Python 3.8 构建，适用于 Windows 7。
