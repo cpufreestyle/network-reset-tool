@@ -369,7 +369,7 @@ COLORS = dict(THEMES[DEFAULT_THEME])
 
 APP_NAME = "网络工具箱"
 
-APP_VERSION = "4.6.2"
+APP_VERSION = "4.6.3"
 
 APP_AUTHOR = "michaelqiu"
 
@@ -380,7 +380,7 @@ APP_VERSION_SHORT = "v" + ".".join(APP_VERSION.split(".")[:2])  # -> v4.6
 # 发布渠道（Gitee Release；auto_updater 与 gitee_upload.py 共用：
 GITEE_OWNER = "cpufreestyle"
 GITEE_REPO = "network-reset-tool"
-EXE_ASSET_NAME = "网络工具箱.exe"
+EXE_ASSET_NAME = None
 
 def _app_data_dir():
     if IS_WINDOWS:

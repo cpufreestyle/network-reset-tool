@@ -146,8 +146,8 @@ class AutoUpdater:
         """解析版本号为元组，方便比较"""
         return tuple(int(x) for x in v.replace('v', '').split('.')[:3])
 
-    # 下载域名白名单：只允许 gitee.com 及其子域（防 DNS 劫持/中间人）
-    ALLOWED_DOWNLOAD_HOSTS = ("gitee.com",)
+    # 下载域名白名单：只允许 GitHub/Gitee 官方域及其子域。
+    ALLOWED_DOWNLOAD_HOSTS = ("gitee.com", "github.com", "githubusercontent.com")
 
     @staticmethod
     def _user_agent(name):
@@ -176,10 +176,10 @@ class AutoUpdater:
                 return True
         raise UpdateIntegrityError(f"拒绝非白名单下载地址: {host or '(无主机名)'}")
 
-    def _open(self, url, timeout=15):
+    def _open(self, url, timeout=15, request=None):
         """打开 URL 前校验白名单；跟随重定向后对最终地址二次校验。"""
         self._check_host(url)
-        resp = urllib.request.urlopen(url, timeout=timeout)
+        resp = urllib.request.urlopen(request or url, timeout=timeout)
         final = resp.geturl()
         if final and final != url:
             self._check_host(final)
@@ -204,8 +204,9 @@ class AutoUpdater:
         for a in self._latest_release.get('assets', []):
             name = (a.get('name') or '')
             low = name.lower()
-            if low.endswith(names) or low in ('sha256sums', 'checksums.txt', 'sha256.txt'):
-                return name, a.get('browser_download_url')
+            if (low.endswith(names)
+                    or low in ('sha256sums', 'sha256sums.txt', 'checksums.txt', 'sha256.txt')):
+                return name, a.get('browser_download_url') or a.get('url')
         return None, None
 
     def _expected_digest(self, asset_name):
@@ -228,7 +229,30 @@ class AutoUpdater:
 
     @property
     def api_url(self):
+        return f"https://api.github.com/repos/{self.gitee_owner}/{self.gitee_repo}/releases/latest"
+
+    @property
+    def fallback_api_url(self):
         return f"https://gitee.com/api/v5/repos/{self.gitee_owner}/{self.gitee_repo}/releases/latest"
+
+    @staticmethod
+    def _is_64bit_process():
+        return sys.maxsize > 2 ** 32
+
+    def _asset_candidates(self):
+        """返回当前系统和进程架构适用的资产名，优先匹配对应构建。"""
+        if sys.platform == 'win32':
+            try:
+                version = sys.getwindowsversion()
+                if version.major == 6 and version.minor == 1:
+                    if self._is_64bit_process():
+                        return ['NetworkToolbox_win7_x64.exe', 'NetworkToolbox_win7_x86.exe']
+                    return ['NetworkToolbox_win7_x86.exe']
+            except Exception:
+                pass
+        if self._is_64bit_process():
+            return ['NetworkToolbox_x64.exe']
+        return ['NetworkToolbox_x86.exe', 'NetworkToolbox_x64.exe']
 
     def check_update(self, force=False):
         """
@@ -247,12 +271,24 @@ class AutoUpdater:
                             return cached
                         return None
 
-            req = urllib.request.Request(
-                self.api_url,
-                headers={'User-Agent': self._user_agent(self.app_name)}
-            )
-            with self._open(req, timeout=10) as resp:
-                self._latest_release = json.loads(resp.read().decode('utf-8'))
+            headers = {
+                'User-Agent': self._user_agent(self.app_name),
+                'Accept': 'application/vnd.github+json',
+            }
+            release = None
+            for api_url in (self.api_url, self.fallback_api_url):
+                try:
+                    req = urllib.request.Request(api_url, headers=headers)
+                    with self._open(api_url, timeout=10, request=req) as resp:
+                        candidate = json.loads(resp.read().decode('utf-8'))
+                    if candidate.get('tag_name'):
+                        release = candidate
+                        break
+                except Exception as exc:
+                    print(f"[AutoUpdater] Release API failed ({api_url}): {exc}")
+            if release is None:
+                return None
+            self._latest_release = release
 
             tag = self._latest_release.get('tag_name', '').replace('v', '')
             if not tag:
@@ -289,23 +325,29 @@ class AutoUpdater:
         assets = self._latest_release.get('assets', [])
         ver = version or self._latest_version or self.current_version_str
 
+        by_name = {a.get('name', ''): a for a in assets}
+        for name in self._asset_candidates():
+            if name in by_name:
+                asset = by_name[name]
+                return asset['name'], asset.get('browser_download_url') or asset.get('url')
+
         # 如果指定了 exe_pattern，直接匹配
         if self.exe_pattern:
             target = self.exe_pattern.replace('{version}', ver)
             target = target.replace('{Version}', ver.capitalize() if ver[0].islower() else ver)
             for a in assets:
                 if a.get('name', '') == target:
-                    return a['name'], a['browser_download_url']
+                    return a['name'], a.get('browser_download_url') or a.get('url')
 
         # 否则找第一个 .exe 文件
         for a in assets:
             name = a.get('name', '')
             if name.lower().endswith('.exe'):
-                return a['name'], a['browser_download_url']
+                return a['name'], a.get('browser_download_url') or a.get('url')
 
         # 最后找任何文件
         for a in assets:
-            return a['name'], a['browser_download_url']
+            return a['name'], a.get('browser_download_url') or a.get('url')
 
         return None, None
 

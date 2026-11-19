@@ -809,6 +809,11 @@ def t_updater_security():
     check("gitee.com 放行", up._check_host("https://gitee.com/a/b") is True)
     check("子域 *.gitee.com 放行",
           up._check_host("https://assets.gitee.com/x.exe") is True)
+    check("github.com 放行", up._check_host("https://github.com/owner/repo/releases") is True)
+    check("api.github.com 子域放行",
+          up._check_host("https://api.github.com/repos/o/r/releases/latest") is True)
+    check("githubusercontent.com 放行",
+          up._check_host("https://objects.githubusercontent.com/release.exe") is True)
     for evil in ("https://evil.com/a.exe", "https://gitee.com.evil.net/a.exe",
                  "http://gitee.com.attacker.io/x"):
         try:
@@ -816,6 +821,26 @@ def t_updater_security():
             check(f"拦截 {evil}", False, "竟然放行了")
         except AU.UpdateIntegrityError:
             check(f"拦截 {evil}", True)
+
+    original_platform = AU.sys.platform
+    original_getwindowsversion = AU.sys.getwindowsversion
+    original_maxsize = AU.sys.maxsize
+    try:
+        AU.sys.platform = 'win32'
+        AU.sys.getwindowsversion = lambda: type('Version', (), {'major': 6, 'minor': 1})()
+        AU.sys.maxsize = 2 ** 63 - 1
+        check("Win7 x64 选择专用资产",
+              up._asset_candidates() == ['NetworkToolbox_win7_x64.exe',
+                                         'NetworkToolbox_win7_x86.exe'],
+              str(up._asset_candidates()))
+        AU.sys.maxsize = 2 ** 31 - 1
+        check("Win7 x86 选择兼容资产",
+              up._asset_candidates() == ['NetworkToolbox_win7_x86.exe'],
+              str(up._asset_candidates()))
+    finally:
+        AU.sys.platform = original_platform
+        AU.sys.getwindowsversion = original_getwindowsversion
+        AU.sys.maxsize = original_maxsize
 
     # --- fail-closed 策略 ---
     check("require_checksum 默认开启", up.require_checksum is True)
