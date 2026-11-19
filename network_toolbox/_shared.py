@@ -375,7 +375,7 @@ APP_AUTHOR = "michaelqiu"
 
 ADAPTER_AUTO = "自动检测（推荐）"   # 网卡下拉框的默认值
 
-APP_VERSION_SHORT = "v" + ".".join(APP_VERSION.split(".")[:2])  # -> v3.3
+APP_VERSION_SHORT = "v" + ".".join(APP_VERSION.split(".")[:2])  # -> v4.6
 
 # 发布渠道（Gitee Release；auto_updater 与 gitee_upload.py 共用：
 GITEE_OWNER = "cpufreestyle"
