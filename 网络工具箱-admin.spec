@@ -24,7 +24,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='网络工具箱',
+    name='NetworkToolbox',
     icon='icon.ico',
     debug=False,
     bootloader_ignore_signals=False,

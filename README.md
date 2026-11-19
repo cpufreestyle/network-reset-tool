@@ -1,4 +1,4 @@
-# 网络工具箱 v4.6
+# 网络工具箱 v4.6.1
 
 <p align="center">
   <img src="https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/cover.png" width="800" alt="网络工具箱" />
@@ -8,8 +8,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%207%2B%20%7C%20macOS-lightgrey.svg)]()
-[![Python](https://img.shields.io/badge/Python-3.11-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-v4.6-orange.svg)]()
+[![Python](https://img.shields.io/badge/Python-3.13%20%7C%203.8-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-v4.6.1-orange.svg)]()
 
 修复网络连接问题 · 重置 Winsock/TCP/IP · 清除 DNS/ARP 缓存 · 网络诊断（Ping/DNS/Traceroute）
 
@@ -45,13 +45,16 @@
 |:---:|:---:|:---:|:---|
 | v4.6.0 | Windows 10/11 64-bit | [NetworkToolbox_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.0/NetworkToolbox_x64.exe) | GUI + CLI 一体（免安装，需管理员运行） |
 | v4.6.0 | Windows 7 32-bit | [NetworkToolbox_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.0/NetworkToolbox_win7_x86.exe) | GUI + CLI 一体（Win7 兼容、免安装） |
+| v4.6.1 | Windows 10/11 64-bit | [NetworkToolbox_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.1/NetworkToolbox_x64.exe) | GUI + CLI 一体（免安装，需管理员运行，Python 3.13） |
+| v4.6.1 | Windows 7 32-bit | [NetworkToolbox_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.1/NetworkToolbox_win7_x86.exe) | GUI + CLI 一体（Win7 兼容、免安装，Python 3.8） |
+| v4.6.1 | Windows 7 64-bit | [NetworkToolbox_win7_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v4.6.1/NetworkToolbox_win7_x64.exe) | GUI + CLI 一体（Win7 兼容、免安装，Python 3.8） |
 | v3.2 | Windows 10/11 64-bit | [NetworkToolbox_x64.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_x64.exe) | GUI 图形界面版（免安装） |
 | v3.2 | Windows 7 32-bit | [网络工具箱_win7_x86.exe](https://github.com/cpufreestyle/network-reset-tool/releases/download/v3.2/NetworkToolbox_win7_x86.exe) | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1.1 | Windows 7/8/10 32-bit | NetworkResetTool_v3_0_win7.exe | GUI 图形界面版（Win7 兼容、免安装） |
 | v3.1 | Windows 8/10 64-bit | [网络工具箱.exe](https://gitee.com/cpufreestyle/network-reset-tool/releases/download/v3.1/网络工具箱.exe) | GUI 图形界面版（免安装） |
 | v1.0 | Windows | network-reset.bat | 命令行脚本版（需管理员权限） |
 | v3.3 | macOS (源码运行) | network_reset_gui.py | 跨平台 GUI（代理修复 + DNS 刷新，需 sudo） |
-> v4.6.0 校验和（SHA256）：`90A5629E1B4B526E49737925BC662E8C137C7F3689C0CFCBEC90CFCFCEF1B5C4`、`755F3A9DCC6E080408E5D7292D192F76DDCBA70E7E5A4A40E64B4E36C8FC922E` —— Release 内附 `sha256sums.txt`（两行），下载后可用 `Get-FileHash -Algorithm SHA256 NetworkToolbox_x64.exe`、`Get-FileHash -Algorithm SHA256 NetworkToolbox_win7_x86.exe` 逐个核对。
+> v4.6.1 校验和（SHA256）：`B870D1D06062900EC16B2C3604AE12E93992E8F136E9C9FA6F65B49B937CCED2`、`5D8489AA27DF24DB47D8555C0EE4D6D969959B074EC66AB4D39474B3705B2BDD`、`6A08FB7D0C939C196A42F1A05A8D633AC8B86092DD260294019C4C6B6C1BA107` —— Release 内附 `sha256sums.txt`（三行），下载后可用 `Get-FileHash -Algorithm SHA256 <文件名>` 逐个核对。
 
 > Windows GUI 版需 **以管理员身份运行** 才能正常使用全部功能。
 
