@@ -331,6 +331,7 @@ class App(tk.Tk):
             messagebox.showinfo(tr("检查更新"),
                                 f"当前已是最新版本 {APP_VERSION_SHORT} 🎉",
                                 parent=self)
+            self._update_available = None
             return
         if not messagebox.askyesno(
                 tr("发现新版本"),
