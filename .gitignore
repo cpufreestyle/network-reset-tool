@@ -8,6 +8,10 @@ dist_new/
 
 # Python
 __pycache__/
+.venv/
+.venv38/
+build_win7x64/
+dist_win7x64/
 *.py[cod]
 *.class
 *.so
