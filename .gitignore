@@ -11,6 +11,8 @@ __pycache__/
 .venv/
 .venv38/
 build_win7x64/
+build_win10/
+dist_win10/
 dist_win7x64/
 *.py[cod]
 *.class
