@@ -91,7 +91,7 @@ class App(tk.Tk):
         except Exception:
             pass
 
-        self.title(f"{APP_NAME} {APP_VERSION_SHORT} ✨")
+        self.title(f"{APP_NAME} v{APP_VERSION} ✨")
         self.geometry("780x640")
         self.minsize(720, 580)
         self.configure(bg=COLORS["bg"])
