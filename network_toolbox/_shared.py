@@ -369,7 +369,7 @@ COLORS = dict(THEMES[DEFAULT_THEME])
 
 APP_NAME = "网络工具箱"
 
-APP_VERSION = "4.6.1"
+APP_VERSION = "4.6.2"
 
 APP_AUTHOR = "michaelqiu"
 
